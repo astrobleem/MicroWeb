@@ -60,3 +60,10 @@ ColourScheme colourScheme666 =
 	// Button
 	RGB666(0xcc, 0xcc, 0xcc),
 };
+
+#include "TandyDither.inc"
+
+const uint8_t tandyDitherOrder[16] =
+{
+    0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5
+};

@@ -85,6 +85,7 @@ private:
 	InternalState internalState;
 	
 	uint8_t palette[256*3];			// RGB values
+	uint16_t tandyDitherPairs[256]; // Precomputed RGBI mixtures, no per-pixel RGB math
 	uint8_t paletteLUT[256];		// GIF palette colour to video mode palette colour
 	int paletteSize;
 	int activePaletteSize;

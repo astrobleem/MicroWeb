@@ -94,6 +94,8 @@ public:
 	
 	virtual bool GetMouseButtonPress(int& x, int& y) = 0;
 	virtual bool GetMouseButtonRelease(int& x, int& y) = 0;
+	// Consume accumulated wheel notches. Positive values scroll down.
+	virtual int GetMouseWheelDelta() { return 0; }
 
 	virtual void RefreshMouse() {}
 

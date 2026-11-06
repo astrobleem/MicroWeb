@@ -2,6 +2,7 @@
 #include "Image.h"
 #include "../Platform.h"
 #include "../Memory/Memory.h"
+#include "../Draw/Surface.h"
 #include <stdio.h>
 
 #define PJPG_MAXCOMPSINSCAN 3
@@ -92,7 +93,8 @@ JpegDecoder::JpegDecoder()
 	, gValidHuffTables(0)
 	, gValidQuantTables(0)
 {
-	bitBufferMask = 0x80;
+	bitBufferValue = 0;
+	bitBufferBits = 0;
 	bitBufferStart = bitBufferEnd = 0;
 }
 
@@ -699,6 +701,7 @@ uint8_t* JpegDecoder::GetHuffVal(uint8_t index)
 
 void JpegDecoder::HuffCreate(const uint8_t* pBits, HuffTable* pHuffTable)
 {
+	memset(pHuffTable->mLookup, 0, sizeof(pHuffTable->mLookup));
 	uint8_t i = 0;
 	uint8_t j = 0;
 
@@ -719,6 +722,21 @@ void JpegDecoder::HuffCreate(const uint8_t* pBits, HuffTable* pHuffTable)
 			pHuffTable->mMinCode[i] = code;
 			pHuffTable->mMaxCode[i] = code + num - 1;
 			pHuffTable->mValPtr[i] = j;
+
+			// Replicate short codes over all unused suffix bits. Guard malformed,
+			// oversubscribed tables so they cannot index outside the prefix table.
+			if (i < 8 && code + num <= (1U << (i + 1)))
+			{
+				uint8_t shift = 7 - i;
+				uint16_t repeat = 1U << shift;
+				for (uint16_t n = 0; n < num; n++)
+				{
+					uint16_t prefix = (code + n) << shift;
+					uint16_t entry = ((uint16_t)(i + 1) << 8) | (uint8_t)(j + n);
+					for (uint16_t suffix = 0; suffix < repeat; suffix++)
+						pHuffTable->mLookup[prefix + suffix] = entry;
+				}
+			}
 
 			j = (uint8_t)(j + num);
 
@@ -812,85 +830,73 @@ void JpegDecoder::FillBitBuffer(uint8_t** data, size_t& length)
 	}
 }
 
+// Keep up to fifteen entropy bits left-aligned in a word. Fetch whole
+// bytes once, leaving restart/EOI markers in the ring for their own parser.
+// Callers request at most eight bits, so no 32-bit arithmetic is required.
+bool JpegDecoder::EnsureBits(uint8_t bits)
+{
+	while (bitBufferBits < bits)
+	{
+		if (bitBufferStart == bitBufferEnd)
+			return false;
+		uint8_t value = bitBuffer[bitBufferStart];
+		uint8_t next = (bitBufferStart + 1) & (JPEG_BIT_BUFFER_SIZE - 1);
+		if (value == 0xff)
+		{
+			if (next == bitBufferEnd || bitBuffer[next] != 0)
+				return false;
+			next = (next + 1) & (JPEG_BIT_BUFFER_SIZE - 1);
+		}
+		bitBufferStart = next;
+		bitBufferValue |= (uint16_t)value << (8 - bitBufferBits);
+		bitBufferBits += 8;
+	}
+	return true;
+}
+
 bool JpegDecoder::GetBit(uint8_t& output)
 {
-	if (bitBufferStart != bitBufferEnd)
-	{
-		uint8_t bits = bitBuffer[bitBufferStart];
-
-		if (bitBufferMask == 0x80 && bits == 0xff)
-		{
-			// Hit escape code
-			uint8_t nextPosition = (bitBufferStart + 1) & (JPEG_BIT_BUFFER_SIZE - 1);
-			if (nextPosition == bitBufferEnd)
-			{
-				// Escape code type not yet in buffer
-				return false;
-			}
-
-			if (bitBuffer[nextPosition] != 0)
-			{
-				uint8_t nextNextPosition = (nextPosition + 1) & (JPEG_BIT_BUFFER_SIZE - 1);
-				if (nextNextPosition == bitBufferEnd)
-				{
-					// Data after escape code not yet in buffer
-					return false;
-				}
-
-				bitBufferStart = nextNextPosition;
-				bits = bitBuffer[bitBufferStart];
-
-				// TODO: handle this
-				//DEBUG_MESSAGE("Unhandled escape code! %d\n", bitBuffer[nextPosition]);
-				//return false;
-			}
-		}
-
-		output = (bits & bitBufferMask) != 0 ? 1 : 0;
-		bitBufferMask >>= 1;
-		if (bitBufferMask == 0)
-		{
-			bitBufferMask = 0x80;
-			bitBufferStart = (bitBufferStart + 1) & (JPEG_BIT_BUFFER_SIZE - 1);
-
-			if (bits == 0xff)
-			{
-				bitBufferStart = (bitBufferStart + 1) & (JPEG_BIT_BUFFER_SIZE - 1);
-			}
-		}
-		return true;
-	}
-	return false;
+	if (!EnsureBits(1))
+		return false;
+	output = (bitBufferValue & 0x8000U) != 0;
+	bitBufferValue <<= 1;
+	bitBufferBits--;
+	return true;
 }
 
 bool JpegDecoder::GetBits(uint8_t bits, uint16_t& output)
 {
 	output = 0;
-	while (bits--)
+	if (!bits)
+		return true;
+	if (bits > 8)
 	{
-		uint8_t bit;
-
-		if (!GetBit(bit))
-		{
+		uint16_t high;
+		if (!GetBits(bits - 8, high) || !GetBits(8, output))
 			return false;
-		}
-		
-		output <<= 1;
-		output |= bit;
+		output |= high << 8;
+		return true;
 	}
-
+	if (!EnsureBits(bits))
+		return false;
+	output = (uint8_t)(bitBufferValue >> 8);
+	output >>= 8 - bits;
+	bitBufferValue <<= bits;
+	bitBufferBits -= bits;
 	return true;
 }
 
 void JpegDecoder::SaveBitBufferState()
 {
-	savedBitBufferMask = bitBufferMask;
+	savedBitBufferValue = bitBufferValue;
+	savedBitBufferBits = bitBufferBits;
 	savedBitBufferStart = bitBufferStart;
 }
 
 void JpegDecoder::RestoreBitBufferState()
 {
-	bitBufferMask = savedBitBufferMask;
+	bitBufferValue = savedBitBufferValue;
+	bitBufferBits = savedBitBufferBits;
 	bitBufferStart = savedBitBufferStart;
 }
 
@@ -949,6 +955,20 @@ int16_t JpegDecoder::HuffExtend(uint16_t x, uint8_t s)
 
 bool JpegDecoder::HuffDecode(const HuffTable* pHuffTable, const uint8_t* pHuffVal, uint8_t& output)
 {
+	if (EnsureBits(8))
+	{
+		uint16_t entry = pHuffTable->mLookup[(uint8_t)(bitBufferValue >> 8)];
+		uint8_t length = (uint8_t)(entry >> 8);
+		if (length)
+		{
+			output = pHuffVal[(uint8_t)entry];
+			bitBufferValue <<= length;
+			bitBufferBits -= length;
+			return true;
+		}
+	}
+	// Long codes and a final short code with fewer than eight available
+	// bits use the canonical decoder, including streamed-input rollback.
 	uint8_t i = 0;
 	uint8_t j;
 	uint16_t code;
@@ -960,9 +980,7 @@ bool JpegDecoder::HuffDecode(const HuffTable* pHuffTable, const uint8_t* pHuffVa
 	}
 	code = bit;
 
-	// This func only reads a bit at a time, which on modern CPU's is not terribly efficient.
-	// But on microcontrollers without strong integer shifting support this seems like a 
-	// more reasonable approach.
+	// Resolve uncommon long codes one bit at a time without a larger table.
 	for (; ; )
 	{
 		uint16_t maxCode;
@@ -1014,7 +1032,8 @@ bool JpegDecoder::FindIntervalMarker()
 			{
 				// Skip over
 				bitBufferStart = (next + 1) & (JPEG_BIT_BUFFER_SIZE - 1);
-				bitBufferMask = 0x80;
+				bitBufferValue = 0;
+				bitBufferBits = 0;
 				return true;
 			}
 		}
@@ -2263,6 +2282,8 @@ void JpegDecoder::BlitBlock()
 
 	if (outputImage->bpp == 8)
 	{
+        const bool tandyDither = Platform::video->paletteLUT == egaPaletteLUT &&
+            Platform::video->drawSurface->format == DrawSurface::Format_4BPP_Packed;
 		if (outputImage->width == gImageXSize && outputImage->height == gImageYSize)
 		{
 			for (int j = 0; j < gMaxMCUYSize; j += 8)
@@ -2283,6 +2304,7 @@ void JpegDecoder::BlitBlock()
 					for (by = 0; by < by_limit; by++)
 					{
 						const int8_t* ditherPattern = colourDitherMatrix + 4 * (by & 3);
+                        const uint8_t* tandyPattern = tandyDitherOrder + 4 * (by & 3);
 						int ditherIndex = 0;
 						MemBlockHandle* lines = outputImage->lines.Get<MemBlockHandle*>();
 						MemBlockHandle lineOutput = lines[outY + by + j];
@@ -2295,6 +2317,12 @@ void JpegDecoder::BlitBlock()
 							uint8_t Cb = *pSrcCb++;
 							uint8_t Cr = *pSrcCr++;
 
+                            if (tandyDither)
+                            {
+                                *pDst++ = TandyDitherColour(TandyYCCDitherPair((uint8_t)Y, Cb, Cr),
+                                    tandyPattern[bx & 3]);
+                                continue;
+                            }
 							int8_t offset = ditherPattern[ditherIndex];
 							ditherIndex = (ditherIndex + 1) & 3;
 							Y += offset;
@@ -2364,6 +2392,7 @@ void JpegDecoder::BlitBlock()
 						uint8_t* pDst = lineOutput.Get<uint8_t*>() + outX1;
 
 						const int8_t* ditherPattern = colourDitherMatrix + 4 * (by & 3);
+                        const uint8_t* tandyPattern = tandyDitherOrder + 4 * (by & 3);
 
 						int horizDiffA = 16;
 						int horizDiffB = outW << 1;
@@ -2376,6 +2405,13 @@ void JpegDecoder::BlitBlock()
 							uint8_t Cb = pSrcCb[idx];
 							uint8_t Cr = pSrcCr[idx];
 
+                            if (tandyDither)
+                            {
+                                *pDst++ = TandyDitherColour(TandyYCCDitherPair((uint8_t)Y, Cb, Cr),
+                                    tandyPattern[bx & 3]);
+                            }
+                            else
+                            {
 							int8_t offset = ditherPattern[bx & 3];
 							Y += offset;
 
@@ -2386,6 +2422,7 @@ void JpegDecoder::BlitBlock()
 
 							int YCbCr = ((Y & 0xe0) << 1) | ((Cb & 0xe0) >> 2) | (Cr >> 5);
 							*pDst++ = Platform::video->paletteLUT[YCbCrToRGB[YCbCr]];
+                            }
 
 							while (D > 0)
 							{

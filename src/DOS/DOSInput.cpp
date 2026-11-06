@@ -27,6 +27,8 @@
 void DOSInputDriver::Init()
 {
 	hasMouse = false;
+	hasMouseWheel = false;
+	queuedWheelDelta = 0;
 	mouseVisible = false;
 	currentCursor = MouseCursor::Hand;
 	mouseHideCount = 1;
@@ -51,6 +53,13 @@ void DOSInputDriver::Init()
 	{
 		return;
 	}
+
+	// CuteMouse WheelAPI 1.0. Old drivers may leave registers unchanged,
+	// so require both the signature and the pointing-device capability.
+	memset(&inreg, 0, sizeof(inreg));
+	inreg.x.ax = 0x11;
+	int86(0x33, &inreg, &outreg);
+	hasMouseWheel = outreg.x.ax == 0x574d && (outreg.x.cx & 1);
 
 	SetMouseCursor(MouseCursor::Pointer);
 
@@ -225,12 +234,29 @@ void DOSInputDriver::GetMouseStatus(int& buttons, int& x, int& y)
 	int86(0x33, &inreg, &outreg);
 	x = outreg.x.cx;
 	y = outreg.x.dx;
-	buttons = outreg.x.bx;
+	buttons = outreg.h.bl;
+
+	if (hasMouseWheel)
+	{
+		// Function 3 clears the driver's wheel counter, including calls
+		// made by RefreshMouse. Keep every such delta until the UI reads it.
+		long accumulated = (long)queuedWheelDelta + (int8_t)outreg.h.bh;
+		if (accumulated > 32767) accumulated = 32767;
+		if (accumulated < -32767) accumulated = -32767;
+		queuedWheelDelta = (int)accumulated;
+	}
 
 	if (Platform::video->screenWidth == 320)
 	{
 		x /= 2;
 	}
+}
+
+int DOSInputDriver::GetMouseWheelDelta()
+{
+	int delta = queuedWheelDelta;
+	queuedWheelDelta = 0;
+	return delta;
 }
 
 InputButtonCode DOSInputDriver::GetKeyPress() 
@@ -254,6 +280,13 @@ bool DOSInputDriver::HasInputPending()
 		return true;
 
 	int x, y;
+	if (hasMouseWheel)
+	{
+		int buttons;
+		GetMouseStatus(buttons, x, y);
+		if (queuedWheelDelta)
+			return true;
+	}
 
 	if (GetMouseButtonPress(x, y))
 	{

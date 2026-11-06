@@ -3,6 +3,7 @@
 #include "Image.h"
 #include "../Platform.h"
 #include "../Colour.h"
+#include "../Draw/Surface.h"
 #include "../Memory/Memory.h"
 
 static const uint8_t pngSignature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
@@ -456,6 +457,17 @@ uint8_t PngDecoder::MapPixel(unsigned sourceX, unsigned x, unsigned y)
     // preserves the page under fully transparent and partly covered pixels.
     unsigned threshold = (unsigned)(colourDitherMatrix[(y & 3) * 4 + (x & 3)] + 32) * 4 + 8;
     if (!opacity || (opacity < 255 && opacity <= threshold)) return TRANSPARENT_COLOUR_VALUE;
+    if (Platform::video->paletteLUT == egaPaletteLUT &&
+        Platform::video->drawSurface->format == DrawSurface::Format_4BPP_Packed)
+    {
+        unsigned phase = tandyDitherOrder[(y & 3) * 4 + (x & 3)];
+        // Alpha uses the original Bayer coverage mask. Reverse its rank bits
+        // for colour among partially covered pixels, so half-covered colours
+        // do not select only one end of their colour mixture.
+        if (opacity < 255)
+            phase = ((phase & 1) << 3) | ((phase & 2) << 1) | ((phase & 4) >> 1) | ((phase & 8) >> 3);
+        return TandyDitherColour(TandyRGBDitherPair((uint8_t)red, (uint8_t)green, (uint8_t)blue), phase);
+    }
     return Platform::video->paletteLUT[RGB332(red, green, blue)];
 }
 

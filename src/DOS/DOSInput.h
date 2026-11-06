@@ -30,6 +30,7 @@ public:
 	virtual void SetMousePosition(int x, int y);
 	virtual bool GetMouseButtonPress(int& x, int& y);
 	virtual bool GetMouseButtonRelease(int& x, int& y);
+	virtual int GetMouseWheelDelta();
 	virtual void RefreshMouse();
 
 	virtual InputButtonCode GetKeyPress();
@@ -39,6 +40,8 @@ private:
 	MouseCursor::Type currentCursor;
 	bool mouseVisible;
 	bool hasMouse;
+	bool hasMouseWheel;
+	int queuedWheelDelta;
 	int mouseHideCount;
 	bool useMouseDriverCursor;
 

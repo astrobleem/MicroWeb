@@ -21,6 +21,11 @@ To run you will need:
 * Large or complex pages may be truncated if there is not enough RAM available
 * Mouse cursor is currently not visible in Hercules mode
 
+Mouse wheels scroll three text lines per notch when the installed DOS mouse
+driver supports CuteMouse WheelAPI 1.0. Older mouse drivers continue to work
+without wheel scrolling. In DOSBox-X, disable wheel-to-key mapping with
+`mouse_wheel_key=0` to use its native wheel API.
+
 ## Keyboard shortcuts
 | Key				           | Shortcut                                                                    |
 |-------------------|-----------------------------------------------------------------------------|

@@ -113,16 +113,18 @@ private:
 		uint16_t mMinCode[16];
 		uint16_t mMaxCode[16];
 		uint8_t mValPtr[16];
+		// Eight-bit canonical-code prefixes: high byte is length, low byte is value index.
+		uint16_t mLookup[256];
 	} HuffTable;
 
-	// DC - 192
+	// DC tables and values
 	HuffTable gHuffTab0;
 	uint8_t gHuffVal0[16];
 
 	HuffTable gHuffTab1;
 	uint8_t gHuffVal1[16];
 
-	// AC - 672
+	// AC tables and values
 	HuffTable gHuffTab2;
 	uint8_t gHuffVal2[256];
 
@@ -157,10 +159,12 @@ private:
 	uint8_t gMCUOrg[6];
 
 	uint8_t bitBuffer[JPEG_BIT_BUFFER_SIZE];
-	uint8_t bitBufferMask;
+	uint16_t bitBufferValue;
+	uint8_t bitBufferBits;
 	uint8_t bitBufferStart;
 	uint8_t bitBufferEnd;
-	uint8_t savedBitBufferMask;
+	uint16_t savedBitBufferValue;
+	uint8_t savedBitBufferBits;
 	uint8_t savedBitBufferStart;
 
 	MCUState mcuState;
@@ -186,6 +190,7 @@ private:
 	void FillBitBuffer(uint8_t** data, size_t& length);
 	void SaveBitBufferState();
 	void RestoreBitBufferState();
+	bool EnsureBits(uint8_t bits);
 	bool GetBit(uint8_t& output);
 	bool GetBits(uint8_t bits, uint16_t& output);
 

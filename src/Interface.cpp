@@ -29,6 +29,18 @@
 #include "Event.h"
 #include "Memory/Memory.h"
 
+static int WheelScrollTarget(int position, int pageHeight, int windowHeight, int notches)
+{
+	// Three 8-pixel keyboard steps per notch. Clamp before narrowing to
+	// DOS 16-bit coordinates, even after many queued wheel events.
+	long target = (long)position + (long)notches * 24;
+	int maxScroll = pageHeight - windowHeight;
+	if (maxScroll < 0) maxScroll = 0;
+	if (target < 0) target = 0;
+	if (target > maxScroll) target = maxScroll;
+	return (int)target;
+}
+
 AppInterface::AppInterface(App& inApp) : app(inApp)
 {
 	oldMouseX = -1;
@@ -81,6 +93,13 @@ void AppInterface::Update()
 	Platform::input->GetMouseStatus(buttons, mouseX, mouseY);
 
 	Node* oldHoverNode = hoverNode;
+	int wheelDelta = Platform::input->GetMouseWheelDelta();
+	if (wheelDelta)
+	{
+		ScrollAbsolute(WheelScrollTarget(scrollPositionY, app.pageRenderer.GetVisiblePageHeight(), windowRect.height, wheelDelta));
+		// Scrolling moves links even when the pointer stays still.
+		hoverNode = PickNode(mouseX, mouseY);
+	}
 
 	if (hoverNode && !IsOverNode(hoverNode, mouseX, mouseY))
 	{

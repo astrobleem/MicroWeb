@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <vector>
+#include "image_test_surface.h"
 #include "../src/Image/Jpeg.h"
 #include "../src/Image/Image.h"
 #include "../src/Platform.h"
@@ -44,6 +45,9 @@ int main(int argc, char** argv)
     TestVideo video(&mode); Platform::video = &video;
     uint8_t lut[256]; for (int n = 0; n < 256; ++n) lut[n] = (uint8_t)n;
     video.paletteLUT = lut; video.colourScheme.pageColour = 1;
+    ImageTestSurface surface(DrawSurface::Format_4BPP_Packed);
+    video.drawSurface = &surface;
+    if (argc > 7 && !strcmp(argv[7], "tandy")) video.paletteLUT = egaPaletteLUT;
     Image image;
     if (argc > 6) { image.width = atoi(argv[5]); image.height = atoi(argv[6]); }
     TestJpeg* decoder = new TestJpeg(); decoder->Start(&image, bpp, dimensions);

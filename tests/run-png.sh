@@ -8,7 +8,7 @@ printf '\n' > build/tests/png-include/conio.h
 "${CXX:-c++}" -std=c++11 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
     -ffunction-sections -fdata-sections -Wno-unknown-pragmas \
     -Ibuild/tests/png-include -Dstricmp=strcasecmp -include strings.h \
-    tests/png_decode.cpp src/Image/Png.cpp src/Image/Decoder.cpp \
+    tests/png_decode.cpp src/Image/Png.cpp src/Image/Decoder.cpp src/Colour.cpp \
     -Wl,--gc-sections -o build/tests/png-decode
 ASAN_OPTIONS="detect_leaks=0${ASAN_OPTIONS:+:$ASAN_OPTIONS}" python3 tests/run-png.py
 # Repeat real samples with the production page allocators, not just isolated
@@ -16,7 +16,7 @@ ASAN_OPTIONS="detect_leaks=0${ASAN_OPTIONS:+:$ASAN_OPTIONS}" python3 tests/run-p
 "${CXX:-c++}" -std=c++11 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
     -ffunction-sections -fdata-sections -Wno-unknown-pragmas \
     -Ibuild/tests/png-include -Dstricmp=strcasecmp -DPNG_REAL_ALLOCATOR -include strings.h \
-    tests/png_decode.cpp src/Image/Png.cpp src/Image/Decoder.cpp \
+    tests/png_decode.cpp src/Image/Png.cpp src/Image/Decoder.cpp src/Colour.cpp \
     src/Memory/Memory.cpp src/Memory/MemBlock.cpp src/Memory/LinAlloc.cpp \
     -Wl,--gc-sections -o build/tests/png-decode-real
 ASAN_OPTIONS="detect_leaks=0${ASAN_OPTIONS:+:$ASAN_OPTIONS}" python3 - <<'PY'

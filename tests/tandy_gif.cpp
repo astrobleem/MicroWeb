@@ -313,7 +313,9 @@ static void verify(const Fixture& f, bool direct, DrawSurface::Format format,
             const int index = f.pixels[sourceY * f.width + sourceX];
             const RGB rgb = f.palette()[index];
             int expected = index == f.transparent ? 255 :
-                direct ? nativeIndex(rgb) : expectedDither(rgb, x, y);
+                direct ? nativeIndex(rgb) : format == DrawSurface::Format_4BPP_Packed ?
+                    TandyDitherColour(TandyRGBDitherPair(rgb.r, rgb.g, rgb.b), tandyDitherOrder[(y & 3) * 4 + (x & 3)]) :
+                    expectedDither(rgb, x, y);
             if (mono)
             {
                 const int grey = index == f.transparent ? 255 : (rgb.r * 76 + rgb.g * 150 + rgb.b * 30) / 256;

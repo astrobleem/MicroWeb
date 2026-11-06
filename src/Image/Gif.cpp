@@ -483,6 +483,8 @@ void GifDecoder::GeneratePaletteLUT(int count)
 		if (outputImage->bpp == 8)
 		{
 			paletteLUT[n] = Platform::video->paletteLUT[RGB332(rgb[0], rgb[1], rgb[2])];
+            if (Platform::video->drawSurface->format == DrawSurface::Format_4BPP_Packed)
+                tandyDitherPairs[n] = TandyRGBDitherPair(rgb[0], rgb[1], rgb[2]);
 			if (Platform::video->drawSurface->format == DrawSurface::Format_4BPP_Packed &&
 				n != transparentColourIndex)
 			{
@@ -572,6 +574,23 @@ void GifDecoder::EmitLine(int y)
 	
 	if (outputImage->bpp == 8)
 	{
+        if (!useTandyPalette && Platform::video->drawSurface->format == DrawSurface::Format_4BPP_Packed)
+        {
+            const uint8_t* phases = tandyDitherOrder + ((y & 3) << 2);
+            // Use exactly the existing nearest-sample resize accumulator.
+            int dy = lineBufferSize << 1, dx = outputImage->width << 1;
+            int error = dy - outputImage->width, sourceX = 0;
+            for (int x = 0; x < outputImage->width; ++x)
+            {
+                uint8_t index = lineBuffer[sourceX];
+                output[x] = index == transparentColourIndex ? TRANSPARENT_COLOUR_VALUE :
+                    TandyDitherColour(tandyDitherPairs[index], phases[x & 3]);
+                while (error > 0) { ++sourceX; error -= dx; }
+                error += dy;
+            }
+            lineOutput.Commit();
+            return;
+        }
 		bool useColourDithering = !useTandyPalette;
 		if (Platform::video->paletteLUT == compositeCgaPaletteLUT)
 		{
