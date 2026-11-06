@@ -141,6 +141,7 @@ public:
 		List,
 		ListItem,
 		CheckBox,
+		HiddenField,
 		NumNodeTypes
 	};
 

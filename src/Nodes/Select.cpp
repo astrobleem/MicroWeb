@@ -9,7 +9,7 @@
 
 SelectNode::Data* SelectNode::Construct(Allocator& allocator, const char* name)
 {
-	return allocator.Alloc<SelectNode::Data>(allocator.AllocString(name));
+	return allocator.Alloc<SelectNode::Data>(name ? allocator.AllocString(name) : NULL);
 }
 
 void SelectNode::ApplyStyle(Node* node)

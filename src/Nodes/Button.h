@@ -9,9 +9,11 @@ public:
 	class Data : public Node
 	{
 	public:
-		Data(const char* inButtonText, NodeCallbackFunction inOnClick) : Node(Node::Button), buttonText(inButtonText), onClick(inOnClick) {}
+		Data(const char* inButtonText, NodeCallbackFunction inOnClick) : Node(Node::Button), buttonText(inButtonText), onClick(inOnClick), name(NULL), value(NULL) {}
 		const char* buttonText;
 		NodeCallbackFunction onClick;
+		const char* name;
+		const char* value;
 	};
 
 	ButtonNode() : focusingFromMouseClick(false) {}

@@ -6,6 +6,17 @@
 #include <stdint.h>
 #include "../Node.h"
 
+class FormEncoding;
+struct URL;
+
+class HiddenFieldData : public Node
+{
+public:
+    HiddenFieldData(const char* inName, const char* inValue) : Node(Node::HiddenField), name(inName), value(inValue) {}
+    const char* name;
+    const char* value;
+};
+
 class FormNode : public NodeHandler
 {
 public:
@@ -25,13 +36,14 @@ public:
 
 	static FormNode::Data* Construct(Allocator& allocator);
 
-	static void SubmitForm(Node* node);
+	static void SubmitForm(Node* node, Node* submitter = NULL);
 
 	static void OnSubmitButtonPressed(Node* node);
 
 private:
-	static void BuildAddressParameterList(Node* node, char* address, int& numParams, size_t bufferLength);
-	static void AppendParameter(char* address, const char* name, const char* value, int& numParams, size_t bufferLength);
+    static bool ResolveAction(URL& address, const char* action);
+    static bool BuildSubmission(Node* node, URL& address, char* postBody, Node* submitter);
+    static bool BuildAddressParameterList(Node* node, FormEncoding& output, Node* submitter);
 };
 
 #endif

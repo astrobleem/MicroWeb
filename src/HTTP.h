@@ -11,6 +11,8 @@
 
 #define RESPONSE_MOVED_PERMANENTLY 301
 #define RESPONSE_MOVED_TEMPORARILY 302
+#define RESPONSE_SEE_OTHER 303
+#define MAX_HTTP_REDIRECTS 5
 #define RESPONSE_TEMPORARY_REDIRECTION 307
 #define RESPONSE_PERMANENT_REDIRECT 308
 
@@ -71,6 +73,8 @@ private:
 		// Errors
 		InvalidPort,
 		InvalidProtocol,
+		InvalidURL,
+		TooManyRedirects,
 		SocketCreationError,
 		SocketConnectionError,
 		HeaderSendError,
@@ -88,11 +92,13 @@ private:
 		OpeningSocket,
 		ConnectingSocket,
 		SendHeaders,
+		SendContent,
 		ReceiveHeaderResponse,
 		ReceiveHeaderContent,
 		ReceiveContent,
 		ParseChunkHeaderLineBreak,
-		ParseChunkHeader
+		ParseChunkHeader,
+		ParseChunkTrailers
 	};
 
 	void MarkError(InternalStatus statusError);
@@ -100,6 +106,8 @@ private:
 	void WriteLine(const char* fmt, ...);
 	bool SendPendingWrites();
 
+	void OpenInternal(RequestType type, const char* inURL, HTTPOptions* options);
+	void Finish();
 	void Reset();
 	void ResetTimeOutTimer();
 
@@ -129,6 +137,10 @@ private:
 	
 	clock_t timeout;
 	RequestType requestType;
+	size_t contentSendPos;
+	unsigned char headerRetryCount;
+	unsigned char redirectCount;
+	bool redirectPending;
 };
 
 

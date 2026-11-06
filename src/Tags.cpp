@@ -330,27 +330,45 @@ void ListTagHandler::Close(class HTMLParser& parser) const
 	parser.PopContext(this);
 }
 
+// Decode once when storing form attributes; submission encodes the resulting bytes.
+static char* FormAttribute(const char* value)
+{
+    char* result = MemoryManager::pageAllocator.AllocString(value);
+    if (result) HTMLParser::ReplaceAmpersandEscapeSequences(result);
+    return result;
+}
+
 struct HTMLInputTag
 {
 	enum Type
 	{
 		Unknown,
 		Submit,
+		Button,
+		Reset,
 		Text,
 		CheckBox,
 		Radio,
-		Password
+		Password,
+		Hidden
 	};
 };
 
 void ButtonTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 {
-	AttributeParser attributes(attributeStr);
-	while (attributes.Parse())
-	{
-	}
-
-	parser.PushContext(ButtonNode::Construct(MemoryManager::pageAllocator, NULL, FormNode::OnSubmitButtonPressed), this);
+    ButtonNode::Data* button = ButtonNode::Construct(MemoryManager::pageAllocator, NULL, FormNode::OnSubmitButtonPressed);
+    if (!button) return;
+    bool disabled = false;
+    AttributeParser attributes(attributeStr);
+    while (attributes.Parse())
+    {
+        if (!stricmp(attributes.Key(), "disabled")) disabled = true;
+        if (!stricmp(attributes.Key(), "name")) button->name = FormAttribute(attributes.Value());
+        if (!stricmp(attributes.Key(), "value")) button->value = FormAttribute(attributes.Value());
+        if (!stricmp(attributes.Key(), "type") && (!stricmp(attributes.Value(), "button") || !stricmp(attributes.Value(), "reset"))) button->onClick = NULL;
+    }
+    if (disabled) { button->name = NULL; button->onClick = NULL; }
+    parser.PushContext(button, this);
 }
 
 void ButtonTagHandler::Close(class HTMLParser& parser) const
@@ -363,6 +381,7 @@ void InputTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 	char* value = NULL;
 	char* name = NULL;
 	bool checked = false;
+	bool disabled = false;
 	HTMLInputTag::Type type = HTMLInputTag::Text;
 	int bufferLength = 80;
 	ExplicitDimension width;
@@ -372,13 +391,25 @@ void InputTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 	{
 		if (!stricmp(attributes.Key(), "type"))
 		{
-			if (!stricmp(attributes.Value(), "submit") || !stricmp(attributes.Value(), "button"))
+			if (!stricmp(attributes.Value(), "submit"))
 			{
 				type = HTMLInputTag::Submit;
 			}
+            else if (!stricmp(attributes.Value(), "button"))
+            {
+                type = HTMLInputTag::Button;
+            }
+            else if (!stricmp(attributes.Value(), "reset"))
+            {
+                type = HTMLInputTag::Reset;
+            }
 			else if (!stricmp(attributes.Value(), "text") || !stricmp(attributes.Value(), "search"))
 			{
 				type = HTMLInputTag::Text;
+			}
+			else if (!stricmp(attributes.Value(), "hidden"))
+			{
+				type = HTMLInputTag::Hidden;
 			}
 			else if (!stricmp(attributes.Value(), "password"))
 			{
@@ -399,30 +430,44 @@ void InputTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 		}
 		if (!stricmp(attributes.Key(), "value"))
 		{
-			value = MemoryManager::pageAllocator.AllocString(attributes.Value());
+			value = FormAttribute(attributes.Value());
 		}
 		if (!stricmp(attributes.Key(), "name"))
 		{
-			name = MemoryManager::pageAllocator.AllocString(attributes.Value());
+			name = FormAttribute(attributes.Value());
 		}
 		if (!stricmp(attributes.Key(), "width"))
 		{
 			width = ExplicitDimension::Parse(attributes.Value());
 		}
+		if (!stricmp(attributes.Key(), "disabled")) disabled = true;
 		if (!stricmp(attributes.Key(), "checked"))
 		{
 			checked = true;
 		}
 	}
 
+    if (disabled) name = NULL;
 	switch (type)
 	{
-	case HTMLInputTag::Submit:
-		if (value)
-		{
-			parser.EmitNode(ButtonNode::Construct(MemoryManager::pageAllocator, value, FormNode::OnSubmitButtonPressed));
-		}
-		break;
+    case HTMLInputTag::Hidden:
+        parser.EmitNode(MemoryManager::pageAllocator.Alloc<HiddenFieldData>(name, value));
+        break;
+    case HTMLInputTag::Button:
+    case HTMLInputTag::Reset:
+        {
+            // These are not successful submit controls. Render their label, but
+            // leave them inert: this browser has no scripting or form-reset engine.
+            const char* label = value ? value : (type == HTMLInputTag::Reset ? "Reset" : "");
+            parser.EmitNode(ButtonNode::Construct(MemoryManager::pageAllocator, label, NULL));
+        }
+        break;
+    case HTMLInputTag::Submit:
+        {
+            ButtonNode::Data* button = ButtonNode::Construct(MemoryManager::pageAllocator, value ? value : "Submit", FormNode::OnSubmitButtonPressed);
+            if (button) { button->name = name; if (disabled) button->onClick = NULL; button->value = value ? value : "Submit"; parser.EmitNode(button); }
+        }
+        break;
 	case HTMLInputTag::Text:
 	case HTMLInputTag::Password:
 		{
@@ -430,6 +475,7 @@ void InputTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 			if (fieldData)
 			{
 				fieldData->name = name;
+                if (disabled) fieldData->onSubmit = NULL;
 				fieldData->explicitWidth = width;
 				fieldData->isPassword = type == HTMLInputTag::Password;
 				parser.EmitNode(fieldData);
@@ -464,7 +510,7 @@ void FormTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 		{
 			if (!stricmp(attributes.Key(), "action"))
 			{
-				formData->action = MemoryManager::pageAllocator.AllocString(attributes.Value());
+				formData->action = FormAttribute(attributes.Value());
 			}
 			if (!stricmp(attributes.Key(), "method"))
 			{
@@ -670,17 +716,19 @@ void TableCellTagHandler::Close(class HTMLParser& parser) const
 void SelectTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 {
 	const char* name = nullptr;
+    bool disabled = false;
 	AttributeParser attributes(attributeStr);
 
 	while (attributes.Parse())
 	{
+		if (!stricmp(attributes.Key(), "disabled")) disabled = true;
 		if (!stricmp(attributes.Key(), "name"))
 		{
-			name = attributes.Value();
+			name = FormAttribute(attributes.Value());
 		}
 	}
 
-	parser.PushContext(SelectNode::Construct(MemoryManager::pageAllocator, name), this);
+	parser.PushContext(SelectNode::Construct(MemoryManager::pageAllocator, disabled ? NULL : name), this);
 }
 
 void SelectTagHandler::Close(class HTMLParser& parser) const
@@ -700,6 +748,8 @@ void OptionTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 
 		while (attributes.Parse())
 		{
+			if (!stricmp(attributes.Key(), "value")) optionNode->value = FormAttribute(attributes.Value());
+			if (!stricmp(attributes.Key(), "disabled")) optionNode->disabled = true;
 			if (!stricmp(attributes.Key(), "selected"))
 			{
 				SelectNode::Data* selectData = optionNode->FindParentDataOfType<SelectNode::Data>(Node::Select);

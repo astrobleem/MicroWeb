@@ -224,7 +224,9 @@ bool DOSTCPSocket::IsConnectComplete()
 
 bool DOSTCPSocket::IsClosed() 
 {
-	return !sock || sock->isClosed();
+	// A peer FIN leaves mTCP in CLOSE_WAIT until we close our side.
+	// HTTP checks this only after draining Receive(), preserving queued bytes.
+	return !sock || sock->isRemoteClosed();
 }
 
 void DOSTCPSocket::Close()

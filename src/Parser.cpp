@@ -162,6 +162,7 @@ void HTMLParser::Finish()
 #define NUM_AMPERSAND_ESCAPE_SEQUENCES (sizeof(ampersandEscapeSequences) / (2 * sizeof(const char*)))
 const char* ampersandEscapeSequences[] = 
 {
+    "apos", "'",
 	"quot",			"\"",
 	"amp",			"&",
 	"lt",			"<",
@@ -560,14 +561,14 @@ void HTMLParser::ReplaceAmpersandEscapeSequences(char* buffer, bool replaceNonBr
 					if (number > FIRST_FONT_GLYPH && number < 128)
 					{
 						*buffer = (char)(number);
-						strcpy(buffer + 1, nextBufferPosition);
+						memmove(buffer + 1, nextBufferPosition, strlen(nextBufferPosition) + 1);
 					}
 					else
 					{
 						const char* unicodeReplacementText = GetUnicodeString(number);
 						int replacementTextLength = (int)strlen(unicodeReplacementText);
 						memcpy(buffer, unicodeReplacementText, replacementTextLength);
-						strcpy(buffer + replacementTextLength, nextBufferPosition);
+						memmove(buffer + replacementTextLength, nextBufferPosition, strlen(nextBufferPosition) + 1);
 						buffer += replacementTextLength - 1;
 					}
 				}
@@ -637,7 +638,7 @@ void HTMLParser::ReplaceAmpersandEscapeSequences(char* buffer, bool replaceNonBr
 						const char* replacementText = ampersandEscapeSequences[matchingEscapeSequence * 2 + 1];
 						int replacementTextLength = (int)strlen(replacementText);
 						memcpy(buffer, replacementText, replacementTextLength);
-						strcpy(buffer + replacementTextLength, nextBufferPosition);
+						memmove(buffer + replacementTextLength, nextBufferPosition, strlen(nextBufferPosition) + 1);
 
 						if (replaceNonBreakingSpace && *buffer == '\x1f')
 						{

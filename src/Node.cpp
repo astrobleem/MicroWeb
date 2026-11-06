@@ -42,7 +42,8 @@ NodeHandler* Node::nodeHandlers[Node::NumNodeTypes] =
 	new OptionNode(),
 	new ListNode(),
 	new ListItemNode(),
-	new CheckBoxNode()
+	new CheckBoxNode(),
+	new NodeHandler()
 };
 
 Node::Node(Type inType)

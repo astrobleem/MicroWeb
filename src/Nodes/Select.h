@@ -9,10 +9,12 @@ public:
 	class Data : public Node
 	{
 	public:
-		Data() : Node(Node::Option), text(nullptr), next(nullptr), addedToSelectNode(false) {}
+		Data() : Node(Node::Option), text(nullptr), value(nullptr), next(nullptr), addedToSelectNode(false), disabled(false) {}
 		const char* text;
+		const char* value;
 		Data* next;
 		bool addedToSelectNode;
+        bool disabled;
 	};
 
 	static OptionNode::Data* Construct(Allocator& allocator);

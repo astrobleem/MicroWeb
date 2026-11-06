@@ -1348,6 +1348,34 @@ bool JpegDecoder::InitFrame()
 }
 
 
+// NEC V20/V30 ignore AAD's immediate radix; Intel 8088 and successors
+// honor it. The probe uses only instructions present on an 8088.
+#if defined(__DOS__) && defined(__WATCOMC__)
+static unsigned DetectNEC();
+#pragma aux DetectNEC = \
+    "mov ax,0100h" \
+    "db 0d5h,010h" \
+    value [ax] modify [ax]
+
+// Called only after the NEC probe. C1 /7 is not an 8088 instruction.
+// Reserve CX as scratch too: keeping the loop counter in CL caused extra
+// spills in Watcom's dense-column path and erased the shift savings.
+static int16_t DescaleNEC(int16_t value);
+#pragma aux DescaleNEC = \
+    "add ax,40h" \
+    "db 0c1h,0f8h,07h" \
+    parm [ax] value [ax] modify [ax cx]
+#endif
+
+template<bool nec> static PJPG_INLINE int16_t DescaleColumn(int value)
+{
+#if defined(__DOS__) && defined(__WATCOMC__)
+    if (nec)
+        return DescaleNEC(value);
+#endif
+    return PJPG_DESCALE(value);
+}
+
 // These multiply helper functions are the 4 types of signed multiplies needed by the Winograd IDCT.
 // A smart C compiler will optimize them to use 16x8 = 24 bit muls, if not you may need to tweak
 // these functions or drop to CPU specific inline assembly.
@@ -1488,18 +1516,16 @@ void JpegDecoder::idctRows(void)
 	}
 }
 
-void JpegDecoder::idctCols(void)
+template<bool nec> static void IDCTColumns(int16_t* pSrc)
 {
 	uint8_t i;
-
-	int16_t* pSrc = gCoeffBuf;
 
 	for (i = 0; i < 8; i++)
 	{
 		if ((pSrc[1 * 8] | pSrc[2 * 8] | pSrc[3 * 8] | pSrc[4 * 8] | pSrc[5 * 8] | pSrc[6 * 8] | pSrc[7 * 8]) == 0)
 		{
 			// Short circuit the 1D IDCT if only the DC component is non-zero
-			uint8_t c = clamp(PJPG_DESCALE(*pSrc) + 128);
+			uint8_t c = clamp(DescaleColumn<nec>(*pSrc) + 128);
 			*(pSrc + 0 * 8) = c;
 			*(pSrc + 1 * 8) = c;
 			*(pSrc + 2 * 8) = c;
@@ -1551,18 +1577,29 @@ void JpegDecoder::idctCols(void)
 			int16_t x42 = x31 - x32;
 
 			// descale, convert to unsigned and clamp to 8-bit
-			*(pSrc + 0 * 8) = clamp(PJPG_DESCALE(x40 + x17) + 128);
-			*(pSrc + 1 * 8) = clamp(PJPG_DESCALE(x41 + tmp2) + 128);
-			*(pSrc + 2 * 8) = clamp(PJPG_DESCALE(x42 + tmp3) + 128);
-			*(pSrc + 3 * 8) = clamp(PJPG_DESCALE(x43 - x44) + 128);
-			*(pSrc + 4 * 8) = clamp(PJPG_DESCALE(x43 + x44) + 128);
-			*(pSrc + 5 * 8) = clamp(PJPG_DESCALE(x42 - tmp3) + 128);
-			*(pSrc + 6 * 8) = clamp(PJPG_DESCALE(x41 - tmp2) + 128);
-			*(pSrc + 7 * 8) = clamp(PJPG_DESCALE(x40 - x17) + 128);
+			*(pSrc + 0 * 8) = clamp(DescaleColumn<nec>(x40 + x17) + 128);
+			*(pSrc + 1 * 8) = clamp(DescaleColumn<nec>(x41 + tmp2) + 128);
+			*(pSrc + 2 * 8) = clamp(DescaleColumn<nec>(x42 + tmp3) + 128);
+			*(pSrc + 3 * 8) = clamp(DescaleColumn<nec>(x43 - x44) + 128);
+			*(pSrc + 4 * 8) = clamp(DescaleColumn<nec>(x43 + x44) + 128);
+			*(pSrc + 5 * 8) = clamp(DescaleColumn<nec>(x42 - tmp3) + 128);
+			*(pSrc + 6 * 8) = clamp(DescaleColumn<nec>(x41 - tmp2) + 128);
+			*(pSrc + 7 * 8) = clamp(DescaleColumn<nec>(x40 - x17) + 128);
 		}
 
 		pSrc++;
 	}
+}
+
+void JpegDecoder::idctCols(void)
+{
+#if defined(__DOS__) && defined(__WATCOMC__)
+    static const bool nec = DetectNEC() == 10;
+    if (nec)
+        IDCTColumns<true>(gCoeffBuf);
+    else
+#endif
+        IDCTColumns<false>(gCoeffBuf);
 }
 
 /*----------------------------------------------------------------------------*/

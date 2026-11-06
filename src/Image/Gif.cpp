@@ -235,6 +235,12 @@ void GifDecoder::Process(uint8_t* data, size_t dataLength)
 				lzwCodeSize = NextByte(&data, dataLength);
 				DEBUG_MESSAGE("LZW code size: %d\n", lzwCodeSize);
 
+				if (lzwCodeSize < 2 || lzwCodeSize > 8)
+				{
+					state = ImageDecoder::Error;
+					return;
+				}
+
 				// Init LZW vars
 				code = 0;
 				clearCode = 1 << lzwCodeSize;
@@ -269,131 +275,103 @@ void GifDecoder::Process(uint8_t* data, size_t dataLength)
 			
 			case ParseImageSubBlock:
 			{
-				if(imageSubBlockSize)
+				while (imageSubBlockSize && dataLength)
 				{
 					imageSubBlockSize--;
-					uint8_t dataByte = NextByte(&data, dataLength);
-					//DEBUG_MESSAGE("-Data: %x\n", dataByte);
-					
-					for(int n = 0; n < 8; n++)
+					unsigned int dataByte = NextByte(&data, dataLength);
+					int bits = 8;
+					// codeBit == -1 means EOI: discard padding until the terminator.
+					if (codeBit < 0) continue;
+					while (bits)
 					{
-						if(dataByte & (1 << n))
+						// Consume a whole group of bits, never a bit-at-a-time loop.
+						// The accumulator holds at most 12 bits, so no 32-bit shifts
+						// (or 19-bit reservoir) are needed on the 8088.
+						int take = codeLength - codeBit;
+						if (take > bits) take = bits;
+						code |= (dataByte & ((1U << take) - 1)) << codeBit;
+						dataByte >>= take;
+						bits -= take;
+						codeBit += take;
+						if (codeBit < codeLength) continue;
+						int currentCode = code;
+						code = 0;
+						codeBit = 0;
+						if (currentCode == clearCode)
 						{
-							code |= (1 << codeBit);
+							codeLength = resetCodeLength;
+							// Literal entries never change; only discard composite entries.
+							dictionaryIndex = clearCode + 2;
+							prev = -1;
+							continue;
 						}
-						codeBit++;
-						
-						if (codeBit == codeLength)
+						if (currentCode == stopCode)
 						{
-							//DEBUG_MESSAGE("code: %x [len=%d]\n", code, codeLength);
+							codeBit = -1;
+							break;
+						}
+						if (currentCode > dictionaryIndex ||
+							(prev < 0 && currentCode >= clearCode))
+						{
+							state = ImageDecoder::Error;
+							return;
+						}
 
-							// Code complete
-							if (code == clearCode)
+						uint8_t stack[1024];
+						bool special = currentCode == dictionaryIndex;
+						int stackSize = special ? 1 : 0;
+						int ptr = special ? prev : currentCode;
+						while (ptr != -1)
+						{
+							if (stackSize >= 1024)
 							{
-								DEBUG_MESSAGE("CLEAR\n");
-								codeLength = resetCodeLength;
-								ClearDictionary();
-								prev = -1;
-								codeBit = 0;
-								code = 0;
-								continue;
+								state = ImageDecoder::Error;
+								return;
 							}
-							else if (code == stopCode)
+							stack[stackSize++] = dictionary[ptr].byte;
+							ptr = dictionary[ptr].prev;
+						}
+						// The first character is already at the top of the stack.
+						// Reuse it instead of walking the prefix chain twice or
+						// spending another 4096 bytes on a first-character cache.
+						uint8_t first = stack[stackSize - 1];
+						if (special) stack[0] = first;
+						if (prev >= 0 && dictionaryIndex < GIF_MAX_DICTIONARY_ENTRIES)
+						{
+							dictionary[dictionaryIndex].byte = first;
+							dictionary[dictionaryIndex++].prev = prev;
+							if (dictionaryIndex == (1 << codeLength) && codeLength < 12)
+								codeLength++;
+						}
+						prev = currentCode;
+						while (stackSize)
+						{
+							if (lineBufferSkipCount == lineBufferDivider - 1)
 							{
-								DEBUG_MESSAGE("STOP\n");
-								if (imageSubBlockSize)
-								{
-									DEBUG_MESSAGE("Malformed GIF\n");
-									// FIXME
-									//state = ImageDecoder::Success;
-									//return;
-									//state = ImageDecoder::Error;
-								}
-								continue;
+								lineBuffer[lineBufferSize++] = stack[stackSize - 1];
+								lineBufferSkipCount = 0;
 							}
-
-							if (prev > -1 && codeLength <= 12)
+							else
 							{
-								if (code > dictionaryIndex)
-								{
-									DEBUG_MESSAGE("Error: code = %x, but dictionaryIndex = %x\n", code, dictionaryIndex);
-									state = ImageDecoder::Error;
-									return;
-								}
-
-								int ptr = (code == dictionaryIndex) ? prev : code;
-								while (dictionary[ptr].prev != -1)
-								{
-									ptr = dictionary[ptr].prev;
-								}
-								dictionary[dictionaryIndex].byte = dictionary[ptr].byte;
-								dictionary[dictionaryIndex].prev = prev;
-
-								dictionaryIndex++;
-
-								if(dictionaryIndex == (1 << (codeLength)) && codeLength < 12)
-								{
-									codeLength++;
-									//DEBUG_MESSAGE("Code length: %d\n", codeLength);
-								}
+								lineBufferSkipCount++;
 							}
 
-							prev = code;
-							
+							lineBufferFlushCount++;
+							stackSize--;
+
+							if (lineBufferFlushCount == imageDescriptor.width)
 							{
-								uint8_t stack[1024];
-								int stackSize = 0;
-								
-								while(code != -1)
-								{
-									if (stackSize >= 1024)
-									{
-										Platform::FatalError("Stack overflow in GIF decoding");
-									}
-
-									stack[stackSize++] = dictionary[code].byte;
-									//DEBUG_MESSAGE(" value: %x\n", dictionary[code].byte);
-
-									code = dictionary[code].prev;
-								}
-								
-								while (stackSize)
-								{
-									if (lineBufferSkipCount == lineBufferDivider - 1)
-									{
-										lineBuffer[lineBufferSize++] = stack[stackSize - 1];
-										lineBufferSkipCount = 0;
-									}
-									else
-									{
-										lineBufferSkipCount++;
-									}
-
-									lineBufferFlushCount++;
-									stackSize--;
-
-									if (lineBufferFlushCount == imageDescriptor.width)
-									{
-										ProcessLineBuffer();
-										lineBufferSize = 0;
-										lineBufferFlushCount = 0;
-									}
-								}
+								ProcessLineBuffer();
+								lineBufferSize = 0;
+								lineBufferFlushCount = 0;
 							}
-							
-							codeBit = 0;
-							code = 0;
 						}
 					}
 				}
-				else
-				{
-				//DEBUG_MESSAGE("--\n");
-					internalState = ParseImageSubBlockSize;
-				}
+				if (!imageSubBlockSize) internalState = ParseImageSubBlockSize;
 			}
 			break;
-			
+
 			case ParseExtension:
 			{
 				if(FillStruct(&data, dataLength, &extensionHeader, sizeof(ExtensionHeader)))

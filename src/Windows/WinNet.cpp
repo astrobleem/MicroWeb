@@ -189,6 +189,7 @@ int WindowsTCPSocket::Receive(uint8_t* buffer, int length)
 	{
 		// Receive data from the server
 		result = recv(sock, (char*)buffer, length, 0);
+		if (result == 0 && length > 0) Close(); // orderly peer EOF
 		if (result == SOCKET_ERROR) {
 			// Failed to receive data
 			Close();

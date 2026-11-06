@@ -12,6 +12,15 @@ To run you will need:
 * 640K RAM is desirable but can run with less
 * Extra memory via XMS or EMS can be used if available and is recommended for loading heavier web pages and images
 
+## CPU compatibility
+The standard build preserves 8086/8088 support. An 8088-safe runtime CPU probe
+selects an NEC V20/V30 immediate-shift path for JPEG IDCT columns; other CPUs
+use the standard path. No separate V20 build is needed.
+
+The probe and IDCT results have been checked with MartyPC's Intel 8088 and NEC
+V20 CPU models. Model-only IDCT timings show a small improvement, but whole-image
+speed on a V20 and operation on physical V20/V30 hardware remain unverified.
+
 ## Limitations
 * HTTP only (See HTTPS limitations below)
 * GIF, baseline JPEG and non-interlaced PNG images are rendered. PNG supports palette and grayscale (1/2/4/8-bit), RGB, grayscale-alpha and RGBA (8-bit), all five row filters, and transparency.
@@ -21,6 +30,19 @@ To run you will need:
 * Large or complex pages may be truncated if there is not enough RAM available
 * Mouse cursor is currently not visible in Hercules mode
 
+## Forms and HTTP
+GET and POST forms preserve hidden fields, selected option values and the clicked
+submit button, with URL encoding and bounded submission buffers. Oversized forms
+are rejected rather than truncated; POST bodies are limited to 511 encoded bytes.
+Reset buttons are displayed but do not reset fields; disabled fieldset/optgroup
+inheritance is not implemented.
+Redirects are limited to five hops, with POST-aware 301/302/303/307/308 handling.
+Stalled plain GET requests may retry once before receiving response bytes; POST
+requests are never automatically retried. HTTPS remains unsupported.
+
+GIF decoding uses a faster streaming LZW path without increasing decoder RAM.
+
+## Mouse wheel
 Mouse wheels scroll three text lines per notch when the installed DOS mouse
 driver supports CuteMouse WheelAPI 1.0. Older mouse drivers continue to work
 without wheel scrolling. In DOSBox-X, disable wheel-to-key mapping with
@@ -61,48 +83,17 @@ MicroWeb supports a wide range of different video modes. You will be asked on st
 * 320x200 16 colours (Tandy 1000, native RGBI)
 * 640x200 16 colours (Tandy Video II / TGA-II, experimental)
 
-On a normal 640K Tandy 1000 EX/HX, run `TANDY` (or `TANDY http://68k.news`)
-for native 320x200 16-colour graphics. Keep `TANDY.BAT`, `VRESERVE.COM`,
-`MICROWEB.EXE`, and the `.dat` files together. The launcher reserves the
-16K of video RAM that the Tandy BIOS otherwise leaves available to DOS,
-then selects mode `t`. The reservation uses about 18K and stays until reboot.
-MicroWeb checks it before entering BIOS mode 09h, so launching directly
-with `-video=t` without protected video memory refuses safely.
-
-This mode uses the Tandy's four-bank packed-pixel video memory and RGBI
-palette. The supplied helper supports DOS 3 or newer and the original
-640K layout (BIOS reports 624K). It refuses other layouts or occupied video
-memory instead of taking another program's allocation. GIFs that already use
-the exact 16 RGBI colours keep those colours without added dithering. The
-example `examples/tandy.htm` includes a native-palette GIF; for local pages
-with relative links or images, supply a full path such as
-`TANDY C:/MICROWEB/EXAMPLES/TANDY.HTM`.
-
-For the later **TGA-II / Video II** hardware, start from 80-column colour
-DOS text mode and use `MICROWEB -video=u` (optionally followed by a URL or
-full local path). This selects a separate 640x200, 16-colour RGBI backend
-with a linear A000 framebuffer and software cursor. Existing mode letters,
-including EX/HX mode `t`, are unchanged. BIOS mode 0Ah is only four colours;
-the new backend programs the Video II registers directly rather than
-mistaking 0Ah for a 16-colour mode.
-
-The TGA-II path is **experimental and not yet validated on real SL/TL/RL
-hardware or a Video II emulator**. It requires the Tandy Video II firmware
-signature/configuration table and refuses VGA/RLX, original Tandy hardware,
-and generic DOSBox Tandy emulation. Its memory guard verifies every paragraph
-of the entire 64K aperture against a freshly tagged DOS-owned allocation,
-reserves that block for the session, and releases it after restoring text
-mode. It does not need `VRESERVE.COM` or a TSR. Only configurations where the
-lower 64K video page can be fully owned this way are accepted. Occupied,
-partially mapped, dedicated/expanded, and unknown video-memory layouts refuse
-safely instead of assuming that RAM is available. Try a standard CGA mode
-if the TGA-II ownership check refuses your configuration.
-
-Host regressions cover the production identification/reservation/register
-code and complete 640x200 rendering, including scrolling, images, text,
-cursor restoration and memory guards (`tests/run-tga2.sh` and
-`tests/run-tga2-surface.sh`). These simulated I/O tests do not establish
-physical timing, monitor output or actual mouse-driver compatibility.
+### Tandy graphics
+* **Tandy 1000 EX/HX (640K):** run `TANDY` for native 320x200 RGBI,
+  optionally followed by a URL or full local path. Keep `TANDY.BAT`,
+  `VRESERVE.COM`, `MICROWEB.EXE`, and the `.dat` files together. The DOS 3+
+  launcher protects video RAM with a reservation of about 18K until reboot;
+  unsupported or occupied memory layouts are rejected. Try `examples/tandy.htm`.
+* **Tandy Video II / TGA-II:** use `MICROWEB -video=u` from 80-column colour
+  text mode for 640x200 RGBI. This mode is experimental: host regression tests
+  pass, but it has not been validated on real SL/TL/RL hardware or a Video II
+  emulator. It requires detected Video II hardware and a safely reservable
+  64K video-memory aperture; otherwise use a standard CGA mode.
 
 ## Command line options
 You can use a URL as an argument to load a specific page on startup. This can also be a path to a local html file. 

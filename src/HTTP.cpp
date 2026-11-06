@@ -1,9 +1,71 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include "HTTP.h"
 
-HTTPRequest::HTTPRequest() : status(HTTPRequest::Stopped), internalStatus(HTTPRequest::InvalidState), sock(NULL), requestOptions(NULL), requestType(HTTPRequest::Get)
+// Resolve redirects into the existing request-path buffer, not another 512-byte
+// allocation per request. Reject oversized destinations rather than truncate them.
+static bool ResolveRedirect(char* out, const char* base, const char* target)
+{
+	const char* authority = strstr(base, "://");
+	if (!authority) return false;
+	authority += 3;
+	const char* basePath = authority + strcspn(authority, "/?#");
+	size_t prefix = 0;
+	bool slash = false;
+	const char* schemeEnd = target + strcspn(target, ":/?#");
+	if (*schemeEnd == ':')
+	{
+		if (strnicmp(target, "http://", 7) && strnicmp(target, "https://", 8)) return false;
+	}
+	else if (target[0] == '/' && target[1] == '/') prefix = 5; // http:
+	else if (target[0] == '/') prefix = basePath - base;
+	else if (target[0] == '#') prefix = strcspn(base, "#");
+	else if (target[0] == '?') prefix = strcspn(base, "?#");
+	else
+	{
+		const char* end = base + strcspn(base, "?#");
+		const char* last = end;
+		while (last > basePath && last[-1] != '/') --last;
+		prefix = last - base;
+		if (last == basePath) slash = true;
+	}
+	size_t length = strlen(target);
+	if (!length || prefix + length + (slash ? 1 : 0) >= PATH_LEN) return false;
+	memcpy(out, base, prefix);
+	if (slash) out[prefix++] = '/';
+	memcpy(out + prefix, target, length + 1);
+
+	// RFC-style dot segments apply to the path only, never the query/fragment.
+	char* start = strstr(out, "://") + 3;
+	start += strcspn(start, "/?#");
+	char* read = start;
+	char* write = start;
+	while (*read && *read != '?' && *read != '#')
+	{
+		if (!strncmp(read, "/./", 3)) { read += 2; continue; }
+		if (!strncmp(read, "/../", 4))
+		{
+			read += 3;
+			while (write > start && *--write != '/') {}
+			continue;
+		}
+		if ((!strncmp(read, "/.", 2) && (!read[2] || read[2] == '?' || read[2] == '#')) ||
+			(!strncmp(read, "/..", 3) && (!read[3] || read[3] == '?' || read[3] == '#')))
+		{
+			if (read[2] == '.') { while (write > start && *--write != '/') {} read += 3; }
+			else read += 2;
+			*write++ = '/';
+			break;
+		}
+		*write++ = *read++;
+	}
+	memmove(write, read, strlen(read) + 1);
+	return true;
+}
+
+HTTPRequest::HTTPRequest() : status(HTTPRequest::Stopped), internalStatus(HTTPRequest::InvalidState), sock(NULL), requestOptions(NULL), requestType(HTTPRequest::Get), redirectCount(0), redirectPending(false)
 {
 	contentType[0] = '\0';
 }
@@ -14,10 +76,16 @@ void HTTPRequest::Reset()
 	lineBufferSendPos = -1;
 	contentType[0] = '\0';
 	contentSize = 0;
+	contentSendPos = 0;
+	contentRemaining = -1;
+	chunkSizeRemaining = 0;
+	usingChunkedTransfer = false;
+	redirectPending = false;
 }
 
 void HTTPRequest::WriteLine(const char* fmt, ...)
 {
+	if (status == Error) return;
 	va_list ap;
 	va_start(ap, fmt);
 	int maxWriteSize = LINE_BUFFER_SIZE - lineBufferSize - 2;
@@ -53,6 +121,7 @@ bool HTTPRequest::SendPendingWrites()
 		int rc = sock->Send((uint8_t*)(lineBuffer + lineBufferSendPos), lineBufferSize - lineBufferSendPos);
 		if (rc > 0)
 		{
+			ResetTimeOutTimer();
 			lineBufferSendPos += rc;
 			if (lineBufferSendPos >= lineBufferSize)
 			{
@@ -72,52 +141,59 @@ bool HTTPRequest::SendPendingWrites()
 
 void HTTPRequest::ResetTimeOutTimer()
 {
-	timeout = clock() + HTTP_RESPONSE_TIMEOUT;
+	timeout = clock();
 }
 
 void HTTPRequest::Open(RequestType type, char* inURL, HTTPOptions* options)
 {
-	url = inURL;
+	redirectCount = 0;
+	headerRetryCount = 0;
+	OpenInternal(type, inURL, options);
+}
+
+void HTTPRequest::OpenInternal(RequestType type, const char* inURL, HTTPOptions* options)
+{
+	Stop();
+	Reset();
+	if (!inURL || strlen(inURL) >= MAX_URL_LENGTH || strpbrk(inURL, "\r\n\t "))
+	{
+		MarkError(InvalidURL);
+		return;
+	}
+	// inURL can be our path buffer during a redirect or url during a retry.
+	memmove(url.url, inURL, strlen(inURL) + 1);
 	requestType = type;
 	requestOptions = options;
-	Reset();
 
 	if (strnicmp(url.url, "http://", 7) == 0) {
 
 		char* hostnameStart = url.url + 7;
-
-		// Scan ahead for another slash; if there is none then we
-		// only have a server name and we should fetch the top
-		// level directory.
+		char* pathStart = hostnameStart + strcspn(hostnameStart, "/?#");
+		size_t hostLength = pathStart - hostnameStart;
+		if (!hostLength || hostLength >= HOSTNAME_LEN || memchr(hostnameStart, '@', hostLength))
+		{
+			MarkError(InvalidURL);
+			return;
+		}
 
 		char* proxy = getenv("HTTP_PROXY");
 		//const char* proxy = "127.0.0.1:8080";
 		if (proxy == NULL) {
 
-			char* pathStart = strchr(hostnameStart, '/');
-			if (pathStart == NULL) {
-
-				strncpy(hostname, hostnameStart, HOSTNAME_LEN);
-				hostname[HOSTNAME_LEN - 1] = 0;
-
+			memcpy(hostname, hostnameStart, hostLength);
+			hostname[hostLength] = 0;
+			if (*pathStart == '/') strcpy(path, pathStart);
+			else
+			{
 				path[0] = '/';
-				path[1] = 0;
-
-			}
-			else {
-
-				strncpy(hostname, hostnameStart, pathStart - hostnameStart);
-				hostname[pathStart - hostnameStart] = '\0';
-				hostname[HOSTNAME_LEN - 1] = 0;
-
-				strncpy(path, pathStart, PATH_LEN);
-				path[PATH_LEN - 1] = 0;
-
+				strcpy(path + 1, pathStart);
 			}
 
 		}
 		else {
 
+			if (!*proxy || strlen(proxy) >= HOSTNAME_LEN || strpbrk(proxy, " /?#\r\n\t"))
+			{ MarkError(InvalidURL); return; }
 			strncpy(hostname, proxy, HOSTNAME_LEN);
 			hostname[HOSTNAME_LEN - 1] = 0;
 
@@ -137,12 +213,14 @@ void HTTPRequest::Open(RequestType type, char* inURL, HTTPOptions* options)
 		char* portStart = strchr(hostname, ':');
 
 		if (portStart != NULL) {
-			serverPort = atoi(portStart + 1);
-			if (serverPort == 0) {
+			char* end;
+			long port = strtol(portStart + 1, &end, 10);
+			if (portStart == hostname || port <= 0 || port > 65535L || *end) {
 				MarkError(InvalidPort);
 				return;
 			}
 
+			serverPort = (uint16_t)port;
 			// Truncate hostname early
 			*portStart = 0;
 		}
@@ -170,30 +248,32 @@ size_t HTTPRequest::ReadData(char* buffer, size_t count)
 			count = chunkSizeRemaining;
 		}
 
+		if (!usingChunkedTransfer && contentRemaining >= 0 && (long)count > contentRemaining)
+			count = (size_t)contentRemaining;
+		if (count > 32767) count = 32767;
+		if (!count) return 0;
 		int16_t rc = sock->Receive((unsigned char*)buffer, (int)count);
 		if (rc < 0)
 		{
 			MarkError(ContentReceiveError);
+		}
+		else if (rc == 0 && sock->IsClosed())
+		{
+			if (!usingChunkedTransfer && contentRemaining < 0) Finish();
+			else MarkError(ContentReceiveError);
 		}
 		else if(rc > 0)
 		{
 			ResetTimeOutTimer();
 
 			int bytesRead = rc;
-			if (contentRemaining > 0)
+			if (!usingChunkedTransfer && contentRemaining > 0)
 			{
 				contentRemaining -= bytesRead;
 				if (contentRemaining <= 0)
 				{
-					if(requestOptions && requestOptions->keepAlive)
-					{
-						status = HTTPRequest::Finished;
-					}
-					else
-					{
-						Stop();
-					}
-					
+					Finish();
+
 					return (size_t)bytesRead;
 				}
 			}
@@ -224,22 +304,40 @@ void HTTPRequest::Stop()
 	status = HTTPRequest::Stopped;
 }
 
+void HTTPRequest::Finish()
+{
+	Stop();
+	status = HTTPRequest::Finished;
+	internalStatus = InvalidState;
+}
+
 void HTTPRequest::MarkError(InternalStatus statusError)
 {
+	Stop();
+	lineBufferSendPos = -1;
 	status = HTTPRequest::Error;
 	internalStatus = statusError;
 }
 
 void HTTPRequest::Update()
 {
-	if (status == HTTPRequest::Stopped)
+	if (status != HTTPRequest::Connecting && status != HTTPRequest::Downloading)
 	{
 		return;
 	}
 
-	if ((status == HTTPRequest::Connecting || status == HTTPRequest::Downloading) && clock() > timeout)
+	if ((status == HTTPRequest::Connecting || status == HTTPRequest::Downloading) &&
+		(unsigned long)clock() - (unsigned long)timeout > (unsigned long)HTTP_RESPONSE_TIMEOUT)
 	{
-		MarkError(TimedOut);
+		// Only replay a plain GET before any response bytes arrived, once.
+		// Never retry a POST or a caller-supplied header/body request.
+		if (!headerRetryCount && requestType == Get && !requestOptions &&
+			internalStatus == ReceiveHeaderResponse && !lineBufferSize && lineBufferSendPos < 0)
+		{
+			++headerRetryCount;
+			OpenInternal(Get, url.url, NULL);
+		}
+		else MarkError(TimedOut);
 		return;
 	}
 
@@ -290,6 +388,7 @@ void HTTPRequest::Update()
 					if (!sock)
 					{
 						MarkError(SocketCreationError);
+						break;
 					}
 
 					if (sock->Connect(hostAddr, serverPort))
@@ -328,7 +427,8 @@ void HTTPRequest::Update()
 						break;
 					}
 					WriteLine("User-Agent: MicroWeb 2.1");
-					WriteLine("Host: %s", hostname);
+					// Host names the origin (including its port), not an HTTP proxy.
+					WriteLine("Host: %.*s", (int)strcspn(url.url + 7, "/?#"), url.url + 7);
 					WriteLine("Accept-Encoding: identity");
 			
 					if(requestOptions && requestOptions->keepAlive)
@@ -345,12 +445,10 @@ void HTTPRequest::Update()
 						WriteLine("%s", requestOptions->headerParams);
 					}
 			
-					if(requestOptions && requestOptions->postContentType && requestOptions->contentData)
+					if(requestType == Post && requestOptions && requestOptions->postContentType && requestOptions->contentData)
 					{
 						WriteLine("Content-Type: %s", requestOptions->postContentType);
 						WriteLine("Content-Length: %d", strlen(requestOptions->contentData));
-						WriteLine("");
-						WriteLine("%s", requestOptions->contentData);
 						WriteLine("");
 					}
 					else
@@ -360,8 +458,23 @@ void HTTPRequest::Update()
 			
 					if(status != HTTPRequest::Error)
 					{
-						internalStatus = ReceiveHeaderResponse;
+						internalStatus = requestType == Post && requestOptions && requestOptions->postContentType && requestOptions->contentData ? SendContent : ReceiveHeaderResponse;
 					}
+				}
+				break;
+				case SendContent:
+				{
+					size_t remaining = strlen(requestOptions->contentData) - contentSendPos;
+					if (remaining)
+					{
+						int rc = sock->Send((uint8_t*)requestOptions->contentData + contentSendPos,
+							(int)(remaining > 32767 ? 32767 : remaining));
+						if (rc < 0) { MarkError(WriteLineError); break; }
+						if (rc > 0) { contentSendPos += rc; ResetTimeOutTimer(); }
+						if ((size_t)rc < remaining) break;
+					}
+					internalStatus = ReceiveHeaderResponse;
+					ResetTimeOutTimer();
 				}
 				break;
 				case ReceiveHeaderResponse:
@@ -404,10 +517,21 @@ void HTTPRequest::Update()
 					{
 						if (lineBuffer[0] == '\0')
 						{
-							if (contentRemaining == 0)
+							if (redirectPending)
 							{
-								// Received header with zero content
-								MarkError(ContentReceiveError);
+								if (redirectCount >= MAX_HTTP_REDIRECTS) { MarkError(TooManyRedirects); break; }
+								++redirectCount;
+								RequestType nextType = requestType;
+								HTTPOptions* nextOptions = requestOptions;
+								if (responseCode == RESPONSE_SEE_OTHER ||
+									(requestType == Post && (responseCode == 301 || responseCode == 302)))
+								{ nextType = Get; nextOptions = NULL; }
+								OpenInternal(nextType, path, nextOptions);
+							}
+							else if (responseCode == 204 || responseCode == 304 || (!usingChunkedTransfer && contentRemaining == 0))
+							{
+								// A zero-length response is complete, not an error.
+								Finish();
 							}
 							else
 							{
@@ -424,46 +548,55 @@ void HTTPRequest::Update()
 							}
 							break;
 						}
-						else if (!strnicmp(lineBuffer, "Location: ", 10))
+						else if (!strnicmp(lineBuffer, "Location:", 9))
 						{
-							if (responseCode == RESPONSE_MOVED_PERMANENTLY || responseCode == RESPONSE_MOVED_TEMPORARILY || responseCode == RESPONSE_TEMPORARY_REDIRECTION || responseCode == RESPONSE_PERMANENT_REDIRECT)
+							if (responseCode == 301 || responseCode == 302 || responseCode == 303 || responseCode == 307 || responseCode == 308)
 							{
-								//printf("Redirecting to %s", lineBuffer + 10);
-								//getchar();
-								Stop();
-
-								char* redirectedAddress = lineBuffer + 10;
-								if (!strnicmp(redirectedAddress, "https://", 8) && !strnicmp(url.url, "http://", 7))
+								char* location = lineBuffer + 9;
+								while (*location == ' ' || *location == '\t') ++location;
+								char* end = location + strlen(location);
+								while (end > location && (end[-1] == ' ' || end[-1] == '\t')) *--end = 0;
+								if (redirectPending || !ResolveRedirect(path, url.url, location)) MarkError(InvalidURL);
+								else
 								{
-									// Check if the redirected address is http -> https
-									if (!strcmp(url.url + 7, redirectedAddress + 8))
-									{
-										url = redirectedAddress;
-										status = HTTPRequest::UnsupportedHTTPS;
-										break;
-									}
-									else
-									{
-										// Attempt to change this to http:// instead
-										strcpy(redirectedAddress + 4, redirectedAddress + 5);
-									}
+									const char* oldHost = strstr(url.url, "://") + 3;
+									const char* newHost = strstr(path, "://") + 3;
+									size_t oldLength = strcspn(oldHost, "/?#");
+									if (requestOptions && requestOptions->headerParams &&
+										(oldLength != strcspn(newHost, "/?#") || strnicmp(oldHost, newHost, oldLength)))
+										MarkError(InvalidURL);
+									else redirectPending = true;
 								}
-
-								Open(requestType, redirectedAddress);
-								break;
 							}
 						}
 						else if (!strnicmp(lineBuffer, "Content-Length:", 15))
 						{
-							contentSize = contentRemaining = strtol(lineBuffer + 15, NULL, 10);
+							char* end;
+							const char* value = lineBuffer + 15;
+							while (*value == ' ' || *value == '\t') ++value;
+							errno = 0;
+							long length = strtol(value, &end, 10);
+							while (*end == ' ' || *end == '\t') ++end;
+							if (*value < '0' || *value > '9' || *end || errno == ERANGE || length < 0 ||
+								(contentRemaining >= 0 && contentRemaining != length))
+								MarkError(ContentReceiveError);
+							else contentSize = contentRemaining = length;
 						}
-						else if (!stricmp(lineBuffer, "Transfer-Encoding: chunked"))
+						else if (!strnicmp(lineBuffer, "Transfer-Encoding:", 18))
 						{
-							usingChunkedTransfer = true;
+							char* value = lineBuffer + 18;
+							while (*value == ' ' || *value == '\t') ++value;
+							char* end = value + strlen(value);
+							while (end > value && (end[-1] == ' ' || end[-1] == '\t')) *--end = 0;
+							if (stricmp(value, "chunked")) MarkError(ContentReceiveError);
+							else usingChunkedTransfer = true;
 						}
 						else if (!strnicmp(lineBuffer, "Content-Type:", 13))
 						{
-							strncpy(contentType, lineBuffer + 14, MAX_CONTENT_TYPE_LENGTH);
+							const char* value = lineBuffer + 13;
+							while (*value == ' ' || *value == '\t') ++value;
+							strncpy(contentType, value, MAX_CONTENT_TYPE_LENGTH - 1);
+							contentType[MAX_CONTENT_TYPE_LENGTH - 1] = 0;
 						}
 
 						//printf("Header: %s  -- \n", lineBuffer);
@@ -485,14 +618,23 @@ void HTTPRequest::Update()
 	{
 		if (ReadLine())
 		{
-			internalStatus = ParseChunkHeader;
+			if (lineBuffer[0]) MarkError(ContentReceiveError);
+			else internalStatus = ParseChunkHeader;
 		}
 	}
 	if (internalStatus == ParseChunkHeader)
 	{
 		if (ReadLine())
 		{
-			chunkSizeRemaining = strtol(lineBuffer, NULL, 16);
+			char* end;
+			errno = 0;
+			chunkSizeRemaining = strtol(lineBuffer, &end, 16);
+			if (!lineBuffer[0] || lineBuffer[0] == '-' || lineBuffer[0] == '+' ||
+				end == lineBuffer || (*end && *end != ';') || errno == ERANGE || chunkSizeRemaining < 0)
+			{
+				MarkError(ContentReceiveError);
+				return;
+			}
 
 			if (chunkSizeRemaining)
 			{
@@ -501,16 +643,15 @@ void HTTPRequest::Update()
 			}
 			else
 			{
-				status = Finished;
+				internalStatus = ParseChunkTrailers;
 			}
 		}
 	}
+	if (internalStatus == ParseChunkTrailers && ReadLine() && !lineBuffer[0]) Finish();
 }
 
 bool HTTPRequest::ReadLine()
 {
-	bool allowBufferTruncation = true;
-
 	if (!sock)
 		return false;
 
@@ -519,7 +660,8 @@ bool HTTPRequest::ReadLine()
 		int rc = sock->Receive((unsigned char*)lineBuffer + lineBufferSize, 1);
 		if (rc == 0)
 		{
-			// Need to wait for new packets to be received, defer
+			if (sock->IsClosed()) MarkError(ContentReceiveError);
+			// A temporarily empty socket is not EOF.
 			return false;
 		}
 		else if (rc < 0)
@@ -528,6 +670,8 @@ bool HTTPRequest::ReadLine()
 			MarkError(ContentReceiveError);
 			return false;
 		}
+
+		ResetTimeOutTimer();
 
 		if (lineBufferSize >= LINE_BUFFER_SIZE)
 		{
@@ -552,17 +696,13 @@ bool HTTPRequest::ReadLine()
 			return true;
 		}
 
-		if (lineBuffer[lineBufferSize] == '\0')
+		if (lineBuffer[lineBufferSize] == '\0' || lineBufferSize >= LINE_BUFFER_SIZE - 1)
 		{
-			// Found terminated string
-			lineBufferSize = 0;
-			return true;
+			// Never turn a truncated Location (or other header) into a valid line.
+			MarkError(ContentReceiveError);
+			return false;
 		}
-
-		if (!allowBufferTruncation || lineBufferSize < LINE_BUFFER_SIZE - 1)
-		{
-			lineBufferSize++;
-		}
+		++lineBufferSize;
 	}
 }
 
@@ -573,6 +713,10 @@ const char* HTTPRequest::GetStatusString()
 	case HTTPRequest::Error:
 		switch (internalStatus)
 		{
+		case InvalidURL:
+			return "Invalid or oversized URL";
+		case TooManyRedirects:
+			return "Too many redirects";
 		case InvalidPort:
 			return "Invalid port";
 		case InvalidProtocol:
@@ -608,6 +752,7 @@ const char* HTTPRequest::GetStatusString()
 			return "Connecting to server";
 		case ConnectingSocket:
 		case SendHeaders:
+		case SendContent:
 			return "Sending headers";
 		case ReceiveHeaderResponse:
 		case ReceiveHeaderContent:
