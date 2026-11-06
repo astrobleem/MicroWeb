@@ -923,21 +923,21 @@ int16_t JpegDecoder::GetExtendOffset(uint8_t i)
 	switch (i)
 	{
 	case 0: return 0;
-	case 1: return ((-1) << 1) + 1;
-	case 2: return ((-1) << 2) + 1;
-	case 3: return ((-1) << 3) + 1;
-	case 4: return ((-1) << 4) + 1;
-	case 5: return ((-1) << 5) + 1;
-	case 6: return ((-1) << 6) + 1;
-	case 7: return ((-1) << 7) + 1;
-	case 8: return ((-1) << 8) + 1;
-	case 9: return ((-1) << 9) + 1;
-	case 10: return ((-1) << 10) + 1;
-	case 11: return ((-1) << 11) + 1;
-	case 12: return ((-1) << 12) + 1;
-	case 13: return ((-1) << 13) + 1;
-	case 14: return ((-1) << 14) + 1;
-	case 15: return ((-1) << 15) + 1;
+	case 1: return -1;
+	case 2: return -3;
+	case 3: return -7;
+	case 4: return -15;
+	case 5: return -31;
+	case 6: return -63;
+	case 7: return -127;
+	case 8: return -255;
+	case 9: return -511;
+	case 10: return -1023;
+	case 11: return -2047;
+	case 12: return -4095;
+	case 13: return -8191;
+	case 14: return -16383;
+	case 15: return -32767;
 	default: return 0;
 	}
 };
