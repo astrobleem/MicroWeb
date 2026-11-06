@@ -20,6 +20,7 @@ public:
 private:
 
 	void ClearDictionary();
+	void GeneratePaletteLUT(int count);
 	
 	int CalculateLineIndex(int y);
 	void ProcessLineBuffer();
@@ -86,6 +87,8 @@ private:
 	uint8_t palette[256*3];			// RGB values
 	uint8_t paletteLUT[256];		// GIF palette colour to video mode palette colour
 	int paletteSize;
+	int activePaletteSize;
+	bool useTandyPalette;
 	uint8_t backgroundColour;
 	int transparentColourIndex;
 	uint8_t lzwCodeSize;

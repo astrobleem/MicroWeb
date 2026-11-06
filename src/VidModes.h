@@ -2,7 +2,7 @@
 #define _VIDMODES_H_
 
 #include <stdint.h>
-#include "Datapack.h"
+#include "DataPack.h"
 #include "Draw/Surface.h"
 
 #define HERCULES_MODE 0

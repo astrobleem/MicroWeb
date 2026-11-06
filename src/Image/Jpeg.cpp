@@ -1333,40 +1333,52 @@ bool JpegDecoder::InitFrame()
 // A smart C compiler will optimize them to use 16x8 = 24 bit muls, if not you may need to tweak
 // these functions or drop to CPU specific inline assembly.
 
+// The IDCT needs the low 16 bits of (value * coefficient + 128) >> 8.
+// On 8086/8088 a signed word multiply gives the complete product in DX:AX;
+// selecting AH and DL avoids a generic long multiply and eight long shifts.
+#if defined(__DOS__) && defined(__WATCOMC__)
+static int16_t MultiplyAndDescale8(int16_t value, int16_t coefficient);
+#pragma aux MultiplyAndDescale8 = \
+    "imul dx" \
+    "add ax,80h" \
+    "adc dx,0" \
+    "mov al,ah" \
+    "mov ah,dl" \
+    parm [ax] [dx] value [ax] modify [ax dx]
+#else
+static PJPG_INLINE int16_t MultiplyAndDescale8(int16_t value, int16_t coefficient)
+{
+    long product = value * (long)coefficient;
+    return (int16_t)PJPG_ARITH_SHIFT_RIGHT_8_L(product + 128L);
+}
+#endif
+
 // 1/cos(4*pi/16)
 // 362, 256+106
 static PJPG_INLINE int16_t imul_b1_b3(int16_t w)
 {
-	long x = (w * 362L);
-	x += 128L;
-	return (int16_t)(PJPG_ARITH_SHIFT_RIGHT_8_L(x));
+	return MultiplyAndDescale8(w, 362);
 }
 
 // 1/cos(6*pi/16)
 // 669, 256+256+157
 static PJPG_INLINE int16_t imul_b2(int16_t w)
 {
-	long x = (w * 669L);
-	x += 128L;
-	return (int16_t)(PJPG_ARITH_SHIFT_RIGHT_8_L(x));
+	return MultiplyAndDescale8(w, 669);
 }
 
 // 1/cos(2*pi/16)
 // 277, 256+21
 static PJPG_INLINE int16_t imul_b4(int16_t w)
 {
-	long x = (w * 277L);
-	x += 128L;
-	return (int16_t)(PJPG_ARITH_SHIFT_RIGHT_8_L(x));
+	return MultiplyAndDescale8(w, 277);
 }
 
 // 1/(cos(2*pi/16) + cos(6*pi/16))
 // 196, 196
 static PJPG_INLINE int16_t imul_b5(int16_t w)
 {
-	long x = (w * 196L);
-	x += 128L;
-	return (int16_t)(PJPG_ARITH_SHIFT_RIGHT_8_L(x));
+	return MultiplyAndDescale8(w, 196);
 }
 
 static PJPG_INLINE uint8_t clamp(int16_t s)

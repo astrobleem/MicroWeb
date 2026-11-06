@@ -24,6 +24,7 @@ VideoModeInfo VideoModeList[] =
 	{ "640x480 256 colours (VESA SVGA)",				0x0101,			640,		480,		DrawSurface::Format_8BPP_VESA,		100,		100,		DataPack::Default,	false,					0xa000,										 },
 	{ "800x600 256 colours (VESA SVGA)",				0x0103,			800,		600,		DrawSurface::Format_8BPP_VESA,		100,		100,		DataPack::Default,	false,					0xa000,										 },
 	{ "1024x768 256 colours (VESA SVGA)",				0x0105,			1024,		768,		DrawSurface::Format_8BPP_VESA,		100,		100,		DataPack::Default,	false,					0xa000,										 },
+	{ "320x200 16 colours (Tandy 1000)",					0x09,			320,		200,		DrawSurface::Format_4BPP_Packed,	120,		70,			DataPack::Lowres,	false,					0xb800,		0xba00,		0xbc00,		0xbe00   },
 	{ nullptr }
 };
 
@@ -61,5 +62,5 @@ VideoModeInfo* ShowVideoModePicker(int defaultSelection)
 
 int GetNumVideoModes()
 {
-	return sizeof(VideoModeList) / sizeof(VideoModeInfo);
+	return sizeof(VideoModeList) / sizeof(VideoModeInfo) - 1;
 }

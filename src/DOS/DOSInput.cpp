@@ -19,25 +19,40 @@
 #include <memory.h>
 #include <stdint.h>
 #include "DOSInput.h"
-#include "../Keycodes.h"
+#include "../KeyCodes.h"
 #include "../DataPack.h"
 #include "../Draw/Surface.h"
 #include "../VidModes.h"
 
 void DOSInputDriver::Init()
 {
-	union REGS inreg, outreg;
-	inreg.x.ax = 0;
-	int86(0x33, &inreg, &outreg);
-	hasMouse = (outreg.x.ax == 0xffff);
-
+	hasMouse = false;
+	mouseVisible = false;
 	currentCursor = MouseCursor::Hand;
-	SetMouseCursor(MouseCursor::Pointer);
 	mouseHideCount = 1;
-
 	useMouseDriverCursor = Platform::video->GetVideoModeInfo()->useMouseDriverCursor;
 	queuedPressX = -1;
 	queuedPressY = -1;
+	lastMouseX = -1;
+	lastMouseY = -1;
+
+	// A keyboard-only machine may have no INT 33h handler installed.
+	void (__interrupt far* mouseHandler)() = _dos_getvect(0x33);
+	if (!mouseHandler || *(uint8_t far*)mouseHandler == 0xcf)
+	{
+		return;
+	}
+
+	union REGS inreg, outreg;
+	memset(&inreg, 0, sizeof(inreg));
+	int86(0x33, &inreg, &outreg);
+	hasMouse = (outreg.x.ax == 0xffff);
+	if (!hasMouse)
+	{
+		return;
+	}
+
+	SetMouseCursor(MouseCursor::Pointer);
 
 	// Set Horizontal Range
 	int horizontalRange = Platform::video->screenWidth;

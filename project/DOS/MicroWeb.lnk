@@ -14,6 +14,7 @@ file VidModes.obj
 file Font.obj 
 file Style.obj 
 file Interface.obj 
+file TndyMem.obj
 file DOSInput.obj 
 file DOSNet.obj 
 file Page.obj 
@@ -75,7 +76,8 @@ begin
 	autosection
 	file Surf1bpp.obj
 	file Surf2bpp.obj 
-	file Surf4bpp.obj 
+	file Surf4bpp.obj
+	file Surf4pak.obj
 	file Surf8bpp.obj 
 	file Surf1512.obj 
 	file SurfVESA.obj 

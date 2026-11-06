@@ -104,11 +104,13 @@
     <ClCompile Include="..\..\src\DOS\EMS.cpp" />
     <ClCompile Include="..\..\src\DOS\Hercules.cpp" />
     <ClCompile Include="..\..\src\DOS\Platform.cpp" />
+    <ClCompile Include="..\..\src\DOS\TndyMem.cpp" />
     <ClCompile Include="..\..\src\DOS\Surf1512.cpp" />
     <ClCompile Include="..\..\src\DOS\Surf4bpp.cpp" />
     <ClCompile Include="..\..\src\DOS\SurfVESA.cpp" />
     <ClCompile Include="..\..\src\DOS\XMS.cpp" />
     <ClCompile Include="..\..\src\Draw\Surf1bpp.cpp" />
+    <ClCompile Include="..\..\src\Draw\Surf4pak.cpp" />
     <ClCompile Include="..\..\src\Font.cpp" />
     <ClCompile Include="..\..\src\Interface.cpp" />
     <ClCompile Include="..\..\src\Memory\LinAlloc.cpp" />
@@ -133,6 +135,8 @@
     <ClInclude Include="..\..\src\DOS\EMS.h" />
     <ClInclude Include="..\..\src\DOS\Hercules.h" />
     <ClInclude Include="..\..\src\DOS\Surf1512.h" />
+    <ClInclude Include="..\..\src\DOS\TndyMem.h" />
+    <ClInclude Include="..\..\src\Draw\Surf4pak.h" />
     <ClInclude Include="..\..\src\DOS\SurfVESA.h" />
     <ClInclude Include="..\..\src\DOS\TextMode.h" />
     <ClInclude Include="..\..\src\DOS\XMS.h" />

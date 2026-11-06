@@ -1,5 +1,5 @@
 #include <memory.h>
-#include "Surf2BPP.h"
+#include "Surf2bpp.h"
 #include "../Font.h"
 #include "../Image/Image.h"
 #include "../Memory/MemBlock.h"

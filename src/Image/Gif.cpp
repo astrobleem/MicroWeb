@@ -24,6 +24,8 @@ GifDecoder::GifDecoder()
 	internalState = ParseHeader;
 	lineBufferSkipCount = 0;
 	transparentColourIndex = -1;
+	activePaletteSize = 0;
+	useTandyPalette = false;
 }
 
 void GifDecoder::Process(uint8_t* data, size_t dataLength)
@@ -146,25 +148,7 @@ void GifDecoder::Process(uint8_t* data, size_t dataLength)
 
 					if(paletteIndex == paletteSize)
 					{
-						if (outputImage->bpp == 8)
-						{
-							for (int n = 0; n < paletteSize; n++)
-							{
-								paletteLUT[n] = Platform::video->paletteLUT[RGB332(palette[n * 3], palette[n * 3 + 1], palette[n * 3 + 2])];
-							}
-						}
-						else
-						{
-							for (int n = 0; n < paletteSize; n++)
-							{
-								paletteLUT[n] = RGB_TO_GREY(palette[n * 3], palette[n * 3 + 1], palette[n * 3 + 2]);
-							}
-						}
-
-						if (transparentColourIndex >= 0)
-						{
-							paletteLUT[transparentColourIndex] = TRANSPARENT_COLOUR_VALUE;
-						}
+						GeneratePaletteLUT(paletteSize);
 
 						internalState = ParseDataBlock;
 					}
@@ -238,25 +222,7 @@ void GifDecoder::Process(uint8_t* data, size_t dataLength)
 
 					if (paletteIndex == localColourTableLength)
 					{
-						if (outputImage->bpp == 8)
-						{
-							for (int n = 0; n < localColourTableLength; n++)
-							{
-								paletteLUT[n] = Platform::video->paletteLUT[RGB332(palette[n * 3], palette[n * 3 + 1], palette[n * 3 + 2])];
-							}
-						}
-						else
-						{
-							for (int n = 0; n < localColourTableLength; n++)
-							{
-								paletteLUT[n] = RGB_TO_GREY(palette[n * 3], palette[n * 3 + 1], palette[n * 3 + 2]);
-							}
-						}
-
-						if (transparentColourIndex >= 0)
-						{
-							paletteLUT[transparentColourIndex] = TRANSPARENT_COLOUR_VALUE;
-						}
+						GeneratePaletteLUT(localColourTableLength);
 
 						internalState = ParseLZWCodeSize;
 					}
@@ -463,6 +429,7 @@ void GifDecoder::Process(uint8_t* data, size_t dataLength)
 					{
 						transparentColourIndex = graphicControlExtension.transparentColourIndex;
 						paletteLUT[transparentColourIndex] = TRANSPARENT_COLOUR_VALUE;
+						if (activePaletteSize) GeneratePaletteLUT(activePaletteSize);
 					}
 					internalState = ParseExtensionSubBlockSize;
 				}
@@ -493,6 +460,44 @@ void GifDecoder::Process(uint8_t* data, size_t dataLength)
 			break;
 		}
 	}
+}
+
+// Native RGBI GIFs already use the display's exact colours. Preserve those
+// indices without introducing dither, and avoid RGB arithmetic per pixel on
+// the 8088. Ordinary GIF palettes retain the existing colour-dither path.
+void GifDecoder::GeneratePaletteLUT(int count)
+{
+	static const uint8_t rgbi[16][3] =
+	{
+		{0,0,0}, {0,0,170}, {0,170,0}, {0,170,170},
+		{170,0,0}, {170,0,170}, {170,85,0}, {170,170,170},
+		{85,85,85}, {85,85,255}, {85,255,85}, {85,255,255},
+		{255,85,85}, {255,85,255}, {255,255,85}, {255,255,255}
+	};
+	activePaletteSize = count;
+	useTandyPalette = outputImage->bpp == 8 &&
+		Platform::video->drawSurface->format == DrawSurface::Format_4BPP_Packed;
+	for (int n = 0; n < count; n++)
+	{
+		uint8_t* rgb = palette + n * 3;
+		if (outputImage->bpp == 8)
+		{
+			paletteLUT[n] = Platform::video->paletteLUT[RGB332(rgb[0], rgb[1], rgb[2])];
+			if (Platform::video->drawSurface->format == DrawSurface::Format_4BPP_Packed &&
+				n != transparentColourIndex)
+			{
+				int colour;
+				for (colour = 0; colour < 16; colour++)
+					if (rgb[0] == rgbi[colour][0] && rgb[1] == rgbi[colour][1] &&
+						rgb[2] == rgbi[colour][2]) break;
+				if (colour == 16) useTandyPalette = false;
+				else paletteLUT[n] = colour;
+			}
+		}
+		else paletteLUT[n] = RGB_TO_GREY(rgb[0], rgb[1], rgb[2]);
+	}
+	if (transparentColourIndex >= 0)
+		paletteLUT[transparentColourIndex] = TRANSPARENT_COLOUR_VALUE;
 }
 
 void GifDecoder::ClearDictionary()
@@ -567,7 +572,7 @@ void GifDecoder::EmitLine(int y)
 	
 	if (outputImage->bpp == 8)
 	{
-		bool useColourDithering = true;
+		bool useColourDithering = !useTandyPalette;
 		if (Platform::video->paletteLUT == compositeCgaPaletteLUT)
 		{
 			//useColourDithering = false;

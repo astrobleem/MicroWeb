@@ -1,7 +1,7 @@
 bin = MicroWeb.exe
 SRC_PATH = ..\..\src
 OBJDIR=obj
-objects = MicroWeb.obj App.obj Parser.obj Tags.obj Platform.obj Colour.obj Hercules.obj BIOSVid.obj VidModes.obj Font.obj Style.obj Interface.obj DOSInput.obj DOSNet.obj Page.obj Layout.obj Node.obj Text.obj Table.obj ListItem.obj Section.obj ImgNode.obj Block.obj StyNode.obj LinkNode.obj Break.obj Render.obj Button.obj CheckBox.obj Select.obj Field.obj DataPack.obj URL.obj Surf1bpp.obj Surf2bpp.obj Surf4bpp.obj Surf8bpp.obj Surf1512.obj SurfVESA.obj Form.obj Status.obj Scroll.obj HTTP.obj Decoder.obj Gif.obj Jpeg.obj Png.obj LinAlloc.obj MemBlock.obj Memory.obj EMS.obj XMS.obj
+objects = MicroWeb.obj App.obj Parser.obj Tags.obj Platform.obj Colour.obj Hercules.obj BIOSVid.obj TndyMem.obj VidModes.obj Font.obj Style.obj Interface.obj DOSInput.obj DOSNet.obj Page.obj Layout.obj Node.obj Text.obj Table.obj ListItem.obj Section.obj ImgNode.obj Block.obj StyNode.obj LinkNode.obj Break.obj Render.obj Button.obj CheckBox.obj Select.obj Field.obj DataPack.obj URL.obj Surf1bpp.obj Surf2bpp.obj Surf4bpp.obj Surf4pak.obj Surf8bpp.obj Surf1512.obj SurfVESA.obj Form.obj Status.obj Scroll.obj HTTP.obj Decoder.obj Gif.obj Jpeg.obj Png.obj LinAlloc.obj MemBlock.obj Memory.obj EMS.obj XMS.obj
 memory_model = -ml
 CC = wpp
 CFLAGS = -zq -0 -os -oh -ok -ol+ -oi+ -ob -s -bt=DOS -w2 $(memory_model) -fi=$(SRC_PATH)\Defines.h
@@ -30,6 +30,15 @@ tcp_compile_options += -i=$(tcp_h_dir)
   wpp $[* $(tcp_compile_options)
 
 # end mTCP stuff
+
+all: $(bin) VRESERVE.COM TANDY.BAT
+
+TANDY.BAT: ..\..\TANDY.BAT
+	copy /Y ..\..\TANDY.BAT TANDY.BAT >NUL
+
+VRESERVE.COM: $(SRC_PATH)\DOS\VRESERVE.ASM
+	wasm -zq -0 -fo=VRESERVE.obj $<
+	$(LD) format dos com name $@ file VRESERVE.obj option quiet
 
 $(bin): $(objects) $(tcpobjs)
     $(LD) name $@ @$(LNK_SCRIPT)
@@ -166,6 +175,9 @@ Colour.obj: $(SRC_PATH)\Colour.cpp
 BIOSVid.obj: $(SRC_PATH)\DOS\BIOSVid.cpp
 	 $(CC) -fo=$@ $(CFLAGS) $<
 
+TndyMem.obj: $(SRC_PATH)\DOS\TndyMem.cpp
+	 $(CC) -fo=$@ $(CFLAGS) $<
+
 Hercules.obj: $(SRC_PATH)\DOS\Hercules.cpp
 	 $(CC) -fo=$@ $(CFLAGS) $<
 
@@ -182,6 +194,9 @@ Surf2bpp.obj: $(SRC_PATH)\Draw\Surf2bpp.cpp
 	 $(CC) -fo=$@ $(CFLAGS) $<
 
 Surf4bpp.obj: $(SRC_PATH)\DOS\Surf4bpp.cpp
+	 $(CC) -fo=$@ $(CFLAGS) $<
+
+Surf4pak.obj: $(SRC_PATH)\Draw\Surf4pak.cpp
 	 $(CC) -fo=$@ $(CFLAGS) $<
 
 Surf8bpp.obj: $(SRC_PATH)\Draw\Surf8bpp.cpp

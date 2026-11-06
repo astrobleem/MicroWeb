@@ -112,6 +112,7 @@ static const int CGAPalmtop = 1;
 static const int EGA = 6;
 static const int VGA = 8;
 static const int Amstrad = 14;
+static const int Tandy = 19;
 
 static int AutoDetectVideoMode()
 {
@@ -155,6 +156,14 @@ static int AutoDetectVideoMode()
 	if (GetAmstradROSVersion() != 0)
 	{
 		return Amstrad;
+	}
+
+	// Original Tandy 1000 ROM signature. Check after EGA/VGA so that an
+	// installed graphics adapter still takes precedence over built-in video.
+	if (*(uint8_t far*)MK_FP(0xffff, 0x000e) == 0xff &&
+		*(uint8_t far*)MK_FP(0xfc00, 0x0000) == 0x21)
+	{
+		return Tandy;
 	}
 
 	// Attempt to detect CGA

@@ -424,6 +424,7 @@ size_t LoadTask::GetContent(char* buffer, size_t count)
 				return fread(buffer, 1, count, fs);
 			}
 			fclose(fs);
+			fs = nullptr;
 		}
 	}
 	else if (type == LoadTask::RemoteFile)

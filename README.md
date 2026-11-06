@@ -6,7 +6,7 @@ MicroWeb is a web browser for DOS that runs as a 16-bit real mode application an
 ## Minimum requirements
 To run you will need:
 * Intel 8088 or compatible CPU
-* CGA, EGA, VGA or Hercules compatible graphics card
+* CGA, EGA, VGA, Hercules or Tandy 1000 compatible graphics
 * A network interface (it is possible to use your machine's serial port with the EtherSLIP driver)
 * A mouse is desirable but not 100% required
 * 640K RAM is desirable but can run with less
@@ -14,7 +14,9 @@ To run you will need:
 
 ## Limitations
 * HTTP only (See HTTPS limitations below)
-* Only GIF images are rendered, although PNG and JPEG dimensions are loaded for layout purposes
+* GIF, baseline JPEG and non-interlaced PNG images are rendered. PNG supports palette and grayscale (1/2/4/8-bit), RGB, grayscale-alpha and RGBA (8-bit), all five row filters, and transparency.
+* Partial PNG alpha uses ordered coverage in color modes; monochrome composites against the page background. Adam7 and 16-bit PNG pixels are unsupported, while their dimensions are still loaded for layout.
+* PNG rows are limited to 4096 bytes before filtering, and rendered images to 1024 pixels wide by 4096 high, subject to available RAM. A bounded workspace of about 40K is shared with the other image decoders. The local `examples/png.htm` sample needs its accompanying PNG files and `tandy.gif`.
 * No CSS or Javascript
 * Large or complex pages may be truncated if there is not enough RAM available
 * Mouse cursor is currently not visible in Hercules mode
@@ -51,6 +53,24 @@ MicroWeb supports a wide range of different video modes. You will be asked on st
 * 640x400 monochrome (Toshiba T3100)
 * 240x128 monochrome (HP 95LX)
 * 640x200 16 colours (Amstrad PC1512)
+* 320x200 16 colours (Tandy 1000, native RGBI)
+
+On a normal 640K Tandy 1000 EX/HX, run `TANDY` (or `TANDY http://68k.news`)
+for native 320x200 16-colour graphics. Keep `TANDY.BAT`, `VRESERVE.COM`,
+`MICROWEB.EXE`, and the `.dat` files together. The launcher reserves the
+16K of video RAM that the Tandy BIOS otherwise leaves available to DOS,
+then selects mode `t`. The reservation uses about 18K and stays until reboot.
+MicroWeb checks it before entering BIOS mode 09h, so launching directly
+with `-video=t` without protected video memory refuses safely.
+
+This mode uses the Tandy's four-bank packed-pixel video memory and RGBI
+palette. The supplied helper supports DOS 3 or newer and the original
+640K layout (BIOS reports 624K). It refuses other layouts or occupied video
+memory instead of taking another program's allocation. GIFs that already use
+the exact 16 RGBI colours keep those colours without added dithering. The
+example `examples/tandy.htm` includes a native-palette GIF; for local pages
+with relative links or images, supply a full path such as
+`TANDY C:/MICROWEB/EXAMPLES/TANDY.HTM`.
 
 ## Command line options
 You can use a URL as an argument to load a specific page on startup. This can also be a path to a local html file. 
@@ -79,5 +99,13 @@ MicroWeb uses Michael Brutman's [mTCP networking library](http://www.brutmanlabs
 
 ## Build instructions
 To build you will need the [OpenWatcom 1.9 C++ compiler](https://sourceforge.net/projects/openwatcom/files/open-watcom-1.9/). 
-Use OpenWatcom's wmake to build the makefile in the project/DOS folder. Currently only builds in a Windows environment.
+On Windows, use OpenWatcom's wmake to build the makefile in the project/DOS folder.
+
+On Linux, install the Linux-hosted [Open Watcom v2 tools](https://github.com/open-watcom/open-watcom-v2/releases), then run from the repository root:
+
+```sh
+WATCOM=/path/to/watcom tools/build-dos.sh
+```
+
+This requires a native C++ compiler for the mTCP runtime patcher. The executable, `VRESERVE.COM`, and `TANDY.BAT` are written to `build/dos`; pass an optional output directory to the script to use a different location. The Linux build uses the same large memory model, DOS overlays, and `-0` (8086/8088) instruction target as the Windows build. Copy the executable and the repository's `.dat` files together when running it.
 

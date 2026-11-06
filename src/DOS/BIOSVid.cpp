@@ -20,11 +20,13 @@
 #include <stdint.h>
 #include "../Image/Image.h"
 #include "BIOSVid.h"
+#include "TndyMem.h"
 #include "../Interface.h"
 #include "../DataPack.h"
 #include "../Draw/Surf1bpp.h"
 #include "../Draw/Surf2bpp.h"
 #include "../Draw/Surf4bpp.h"
+#include "../Draw/Surf4pak.h"
 #include "../Draw/Surf8bpp.h"
 #include "Surf1512.h"
 #include "SurfVESA.h"
@@ -76,6 +78,13 @@ void BIOSVideoDriver::GeneratePalette()
 
 void BIOSVideoDriver::Init(VideoModeInfo* inVideoModeInfo)
 {
+	if (inVideoModeInfo->surfaceFormat == DrawSurface::Format_4BPP_Packed &&
+		!TandyVideoMemoryReady())
+	{
+		Platform::FatalError("Native Tandy mode requires protected video memory");
+		return;
+	}
+
 	videoMode = inVideoModeInfo;
 	startingScreenMode = GetScreenMode();
 
@@ -125,6 +134,12 @@ void BIOSVideoDriver::Init(VideoModeInfo* inVideoModeInfo)
 	case DrawSurface::Format_4BPP_EGA:
 		drawSurface = new DrawSurface_4BPP(screenWidth, screenHeight);
 		screenPitch = screenWidth / 8;
+		colourScheme = egaColourScheme;
+		paletteLUT = egaPaletteLUT;
+		break;
+	case DrawSurface::Format_4BPP_Packed:
+		drawSurface = new DrawSurface_4BPP_Packed(screenWidth, screenHeight);
+		screenPitch = screenWidth / 2;
 		colourScheme = egaColourScheme;
 		paletteLUT = egaPaletteLUT;
 		break;
