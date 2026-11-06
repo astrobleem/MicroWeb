@@ -150,6 +150,9 @@ int8_t Buffer_init( void ) {
     return -1;
   }
 
+  // Preserve the allocation owner before normalizing individual buffers.
+  BufferMemPtr = tmp;
+
   // Put pointers to packets in the free stack.
 
   for ( uint8_t i=0; i < PACKET_BUFFERS; i++ ) {
@@ -262,7 +265,15 @@ void Buffer_stopReceiving( void ) { Buffer_fs_index = 0; }
 // This is about the last step before shutting everything down.  It just has
 // to return the memory that was allocated.
 
-void Buffer_stop( void ) { if ( BufferMemPtr) free( BufferMemPtr ); }
+void Buffer_stop( void ) {
+  if ( BufferMemPtr ) {
+    free( BufferMemPtr );
+    BufferMemPtr = NULL;
+  }
+  Buffer_fs_index = 0;
+  Buffer_first = Buffer_next = 0;
+  Buffer_packetBeingCopied = NULL;
+}
 
 
 

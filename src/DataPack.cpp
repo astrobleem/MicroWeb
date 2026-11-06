@@ -6,6 +6,35 @@
 #include <malloc.h>
 
 DataPack Assets;
+const char* DataPack::programPath = NULL;
+
+void DataPack::SetProgramPath(const char* path)
+{
+	programPath = path;
+}
+
+// Keep relative page URLs rooted in the caller's directory. Only support
+// assets get an executable-directory fallback; never chdir() to find them.
+static FILE* OpenDataPack(const char* path, const char* executable)
+{
+	FILE* fs = fopen(path, "rb");
+	if (fs || !executable || strpbrk(path, "\\/:"))
+		return fs;
+
+	const char* filename = executable;
+	for (const char* p = executable; *p; ++p)
+	{
+		if (*p == '\\' || *p == '/' || *p == ':')
+			filename = p + 1;
+	}
+	size_t directoryLength = filename - executable;
+	char assetPath[260];
+	if (!directoryLength || directoryLength + strlen(path) >= sizeof(assetPath))
+		return NULL;
+	memcpy(assetPath, executable, directoryLength);
+	strcpy(assetPath + directoryLength, path);
+	return fopen(assetPath, "rb");
+}
 
 #pragma warning(disable:4996)
 
@@ -25,7 +54,7 @@ bool DataPack::LoadPreset(DataPack::Preset preset)
 
 bool DataPack::Load(const char* path)
 {
-	FILE* fs = fopen(path, "rb");
+	FILE* fs = OpenDataPack(path, programPath);
 
 	if (!fs)
 	{

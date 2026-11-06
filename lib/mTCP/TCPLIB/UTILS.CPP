@@ -709,6 +709,7 @@ int8_t Utils::initStack( uint8_t tcpSockets,
 
   if ( Buffer_init( ) ) {
     fprintf( stderr, InitErrorMsg, "packet buffers" );
+    Trace_endTracing( );
     return -1;
   }
 
@@ -753,6 +754,10 @@ int8_t Utils::initStack( uint8_t tcpSockets,
       fprintf( stderr, "  Configured NetDrive shim interrupt: 0x%X\n", packetInt2 );
     };
     puts("");
+    // No driver handle, timer, or Ctrl-Break vector is installed yet, so
+    // endStack is not safe here. Release only what this path acquired.
+    Buffer_stop( );
+    Trace_endTracing( );
     return -1;
   }
 

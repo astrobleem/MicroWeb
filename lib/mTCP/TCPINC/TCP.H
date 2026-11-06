@@ -415,6 +415,7 @@ class TcpSocket {
 
     void   close( void );
     void   closeNonblocking( void );
+    void   abortConnection( void );
     int8_t isCloseDone( void );
 
 

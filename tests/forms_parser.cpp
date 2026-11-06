@@ -9,12 +9,17 @@
 #include "../src/Nodes/Button.h"
 #include "../src/Nodes/Select.h"
 #include "../src/Nodes/CheckBox.h"
+#include "../src/Nodes/LinkNode.h"
+#include "../src/Nodes/ImgNode.h"
 
 // A tag-handler harness: actual production attribute parsing and tag handlers,
 // with page emission captured instead of involving fonts/video/layout.
 LinearAllocator MemoryManager::pageAllocator;
 Node::Node(Type t) : styleHandle(0), type(t), isLayoutComplete(false) { anchor.x = anchor.y = size.x = size.y = 0; }
 Node* Node::FindParentOfType(Node::Type t) { for (Node* p = parent.Get(); p; p = p->parent.Get()) if (p->type == t) return p; return NULL; }
+void* MemBlockHandle::GetPtr() { return conventionalPointer; }
+LinkNode::Data* LinkNode::Construct(Allocator& a, const char* url) { MemBlockHandle h((void*)url); return a.Alloc<LinkNode::Data>(h); }
+ImageNode::Data* ImageNode::Construct(Allocator& a) { return a.Alloc<ImageNode::Data>(); }
 Node* emitted;
 Node* context;
 HTMLParser::HTMLParser(Page& p) : page(p), contextStack(MemoryManager::pageAllocator) {}
@@ -26,9 +31,31 @@ FormNode::Data* FormNode::Construct(Allocator& a) { return a.Alloc<FormNode::Dat
 
 int main()
 {
+    char umlauts[] = "&Auml;&auml;&Ouml;&ouml;&Uuml;&uuml;&szlig;&#7838;&#x1e9e;";
+    HTMLParser::ReplaceAmpersandEscapeSequences(umlauts);
+    assert(!strcmp(umlauts, "\xc4\xe4\xd6\xf6\xdc\xfc\xdfSSSS"));
+    char euros[] = "&euro; &#8364; &#x20ac;";
+    HTMLParser::ReplaceAmpersandEscapeSequences(euros);
+    assert(!strcmp(euros, "EUR EUR EUR"));
+    assert(!strcmp(HTMLParser::GetUnicodeString(0x20ac), "EUR"));
+    assert(!strcmp(HTMLParser::GetUnicodeString(0x1e9e), "SS"));
+    const char* encoded[] = { "&", "&&", "&unknown;", "a&amp;amp;b", "a&#38;amp;b", "&#38junk;", "&#999999999999999999999;", "&#x;", "&#32;", "&AMP;", "x&#38;y", "&#0;" };
+    const char* decoded[] = { "&", "&&", "&unknown;", "a&amp;b", "a&amp;b", "&#38junk;", "&#999999999999999999999;", "&#x;", " ", "&", "x&y", "?" };
+    for (unsigned i = 0; i < sizeof(encoded) / sizeof(encoded[0]); ++i) {
+        char* value = new char[strlen(encoded[i]) + 1]; strcpy(value, encoded[i]);
+        HTMLParser::ReplaceAmpersandEscapeSequences(value); assert(!strcmp(value, decoded[i])); delete[] value;
+    }
     // Page is never accessed by these tag handlers or emission stubs.
     alignas(Page) unsigned char pageStorage[sizeof(Page)];
     HTMLParser parser(*reinterpret_cast<Page*>(pageStorage));
+    ATagHandler anchor; ImgTagHandler image;
+    char href[] = "href='http://example/p?a=1&amp;b=2&#38;c=3&amp;amp;d=4'";
+    anchor.Open(parser, href);
+    assert(!strcmp(static_cast<LinkNode::Data*>(emitted)->GetURL(), "http://example/p?a=1&b=2&c=3&amp;d=4"));
+    anchor.Close(parser);
+    char src[] = "src='img.gif?a=1&amp;b=2&#x26;c=3&amp;amp;d=4'";
+    image.Open(parser, src);
+    assert(!strcmp(static_cast<ImageNode::Data*>(emitted)->source, "img.gif?a=1&b=2&c=3&amp;d=4"));
     InputTagHandler input("input"); ButtonTagHandler button;
     FormTagHandler form; SelectTagHandler select; OptionTagHandler option;
     char hidden[] = "type='hidden' name='t&amp;n' value='a&amp;b&#61;&quot;&apos;&#x2b;'";

@@ -18,6 +18,8 @@
 
 #define MAX_CONTENT_TYPE_LENGTH 32
 
+#define HTTPS_PROXY_WARNING "HTTPS via proxy: DOS link unencrypted"
+
 #define HTTP_RESPONSE_TIMEOUT_SECONDS 20
 #define HTTP_RESPONSE_TIMEOUT (HTTP_RESPONSE_TIMEOUT_SECONDS * CLOCKS_PER_SEC)
 
@@ -74,6 +76,8 @@ private:
 		InvalidPort,
 		InvalidProtocol,
 		InvalidURL,
+		InvalidProxy,
+		HTTPSDowngrade,
 		TooManyRedirects,
 		SocketCreationError,
 		SocketConnectionError,

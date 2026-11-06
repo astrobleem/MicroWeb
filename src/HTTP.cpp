@@ -19,7 +19,7 @@ static bool ResolveRedirect(char* out, const char* base, const char* target)
 	{
 		if (strnicmp(target, "http://", 7) && strnicmp(target, "https://", 8)) return false;
 	}
-	else if (target[0] == '/' && target[1] == '/') prefix = 5; // http:
+	else if (target[0] == '/' && target[1] == '/') prefix = authority - base - 2; // Keep http: or https:
 	else if (target[0] == '/') prefix = basePath - base;
 	else if (target[0] == '#') prefix = strcspn(base, "#");
 	else if (target[0] == '?') prefix = strcspn(base, "?#");
@@ -62,6 +62,36 @@ static bool ResolveRedirect(char* out, const char* base, const char* target)
 		*write++ = *read++;
 	}
 	memmove(write, read, strlen(read) + 1);
+	return true;
+}
+
+// IPv4/DNS endpoint only. Both origins and gateways are checked before DNS,
+// including the origin port when the connection itself goes to a proxy.
+static bool ParseEndpoint(const char* value, size_t length, size_t& hostLength, uint16_t& port)
+{
+	hostLength = 0;
+	if (!length || length >= HOSTNAME_LEN) return false;
+	while (hostLength < length && value[hostLength] != ':')
+	{
+		unsigned char c = value[hostLength];
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_')) return false;
+		++hostLength;
+	}
+	if (!hostLength) return false;
+	if (hostLength < length)
+	{
+		unsigned long number = 0;
+		if (hostLength + 1 == length) return false;
+		for (size_t i = hostLength + 1; i < length; ++i)
+		{
+			if (value[i] < '0' || value[i] > '9') return false;
+			number = number * 10 + (value[i] - '0');
+			if (number > 65535UL) return false;
+		}
+		if (!number) return false;
+		port = (uint16_t)number;
+	}
 	return true;
 }
 
@@ -165,78 +195,62 @@ void HTTPRequest::OpenInternal(RequestType type, const char* inURL, HTTPOptions*
 	requestType = type;
 	requestOptions = options;
 
-	if (strnicmp(url.url, "http://", 7) == 0) {
+	bool https = !strnicmp(url.url, "https://", 8);
+	if (!https && strnicmp(url.url, "http://", 7))
+	{
+		MarkError(InvalidProtocol);
+		return;
+	}
 
-		char* hostnameStart = url.url + 7;
-		char* pathStart = hostnameStart + strcspn(hostnameStart, "/?#");
-		size_t hostLength = pathStart - hostnameStart;
-		if (!hostLength || hostLength >= HOSTNAME_LEN || memchr(hostnameStart, '@', hostLength))
+	const char* origin = url.url + (https ? 8 : 7);
+	const char* pathStart = origin + strcspn(origin, "/?#");
+	size_t hostLength;
+	serverPort = https ? 443 : 80;
+	if (!ParseEndpoint(origin, pathStart - origin, hostLength, serverPort))
+	{
+		MarkError(InvalidURL);
+		return;
+	}
+
+	// HTTPS is never sent directly or silently changed to HTTP. This separate
+	// opt-in names a trusted plaintext TLS gateway, not a CONNECT proxy.
+	const char* proxy = getenv(https ? "MICROWEB_HTTPS_PROXY" : "HTTP_PROXY");
+	if (https && (!proxy || !*proxy))
+	{
+		status = HTTPRequest::UnsupportedHTTPS;
+		return;
+	}
+	if (proxy)
+	{
+		serverPort = 80;
+		if (!ParseEndpoint(proxy, strlen(proxy), hostLength, serverPort))
 		{
-			MarkError(InvalidURL);
+			MarkError(InvalidProxy);
 			return;
 		}
-
-		char* proxy = getenv("HTTP_PROXY");
-		//const char* proxy = "127.0.0.1:8080";
-		if (proxy == NULL) {
-
-			memcpy(hostname, hostnameStart, hostLength);
-			hostname[hostLength] = 0;
-			if (*pathStart == '/') strcpy(path, pathStart);
-			else
-			{
-				path[0] = '/';
-				strcpy(path + 1, pathStart);
-			}
-
-		}
-		else {
-
-			if (!*proxy || strlen(proxy) >= HOSTNAME_LEN || strpbrk(proxy, " /?#\r\n\t"))
-			{ MarkError(InvalidURL); return; }
-			strncpy(hostname, proxy, HOSTNAME_LEN);
-			hostname[HOSTNAME_LEN - 1] = 0;
-
-			strncpy(path, url.url, PATH_LEN);
-			path[PATH_LEN - 1] = 0;
-
-		}
-		
-		// If there is a # in the URL, remove from the path
-		char* hashPathPtr = strstr(path, "#");
-		if (hashPathPtr)
+		memcpy(hostname, proxy, hostLength);
+		hostname[hostLength] = 0;
+		strcpy(path, url.url); // Absolute-form target, including https://.
+	}
+	else
+	{
+		memcpy(hostname, origin, hostLength);
+		hostname[hostLength] = 0;
+		if (*pathStart == '/') strcpy(path, pathStart);
+		else
 		{
-			*hashPathPtr = '\0';
+			path[0] = '/';
+			strcpy(path + 1, pathStart);
 		}
-
-		serverPort = 80;
-		char* portStart = strchr(hostname, ':');
-
-		if (portStart != NULL) {
-			char* end;
-			long port = strtol(portStart + 1, &end, 10);
-			if (portStart == hostname || port <= 0 || port > 65535L || *end) {
-				MarkError(InvalidPort);
-				return;
-			}
-
-			serverPort = (uint16_t)port;
-			// Truncate hostname early
-			*portStart = 0;
-		}
-
-		status = HTTPRequest::Connecting;
-		internalStatus = QueuedDNSRequest;
-
-		ResetTimeOutTimer();
 	}
-	else if (strnicmp(url.url, "https://", 8) == 0) {
-		status = HTTPRequest::UnsupportedHTTPS;
-	}
-	else {
-		// Need to specify a URL starting with http://
-		MarkError(InvalidProtocol);
-	}
+
+	// Fragments belong to the browser and are never sent to either server.
+	char* fragment = strchr(path, '#');
+	if (fragment) *fragment = 0;
+
+	status = HTTPRequest::Connecting;
+	internalStatus = QueuedDNSRequest;
+	ResetTimeOutTimer();
 }
 
 size_t HTTPRequest::ReadData(char* buffer, size_t count)
@@ -426,9 +440,20 @@ void HTTPRequest::Update()
 						WriteLine("GET %s HTTP/1.1", path);
 						break;
 					}
-					WriteLine("User-Agent: MicroWeb 2.1");
+					// Preserve the optional suffix supported by earlier MicroWeb builds.
+					// Ignore invalid configuration instead of allowing header injection.
+					const char* agent = getenv("HTTP_USER_AGENT");
+					bool validAgent = agent && *agent && strlen(agent) <= 120;
+					if (validAgent)
+					{
+						for (const unsigned char* p = (const unsigned char*)agent; *p; ++p)
+							if (*p < 32 || *p == 127) { validAgent = false; break; }
+					}
+					if (validAgent) WriteLine("User-Agent: MicroWeb 2.1 %s", agent);
+					else WriteLine("User-Agent: MicroWeb 2.1");
 					// Host names the origin (including its port), not an HTTP proxy.
-					WriteLine("Host: %.*s", (int)strcspn(url.url + 7, "/?#"), url.url + 7);
+					const char* origin = strstr(url.url, "://") + 3;
+					WriteLine("Host: %.*s", (int)strcspn(origin, "/?#"), origin);
 					WriteLine("Accept-Encoding: identity");
 			
 					if(requestOptions && requestOptions->keepAlive)
@@ -557,6 +582,8 @@ void HTTPRequest::Update()
 								char* end = location + strlen(location);
 								while (end > location && (end[-1] == ' ' || end[-1] == '\t')) *--end = 0;
 								if (redirectPending || !ResolveRedirect(path, url.url, location)) MarkError(InvalidURL);
+								else if (!strnicmp(url.url, "https://", 8) && !strnicmp(path, "http://", 7))
+									MarkError(HTTPSDowngrade);
 								else
 								{
 									const char* oldHost = strstr(url.url, "://") + 3;
@@ -708,6 +735,9 @@ bool HTTPRequest::ReadLine()
 
 const char* HTTPRequest::GetStatusString()
 {
+	if ((status == Connecting || status == Downloading || status == Finished) &&
+		!strnicmp(url.url, "https://", 8)) return HTTPS_PROXY_WARNING;
+
 	switch (status)
 	{
 	case HTTPRequest::Error:
@@ -715,6 +745,10 @@ const char* HTTPRequest::GetStatusString()
 		{
 		case InvalidURL:
 			return "Invalid or oversized URL";
+		case InvalidProxy:
+			return "Invalid proxy: use hostname:port";
+		case HTTPSDowngrade:
+			return "Blocked HTTPS to HTTP redirect";
 		case TooManyRedirects:
 			return "Too many redirects";
 		case InvalidPort:
@@ -774,7 +808,7 @@ const char* HTTPRequest::GetStatusString()
 	case HTTPRequest::Finished:
 		return "Finished";
 	case HTTPRequest::UnsupportedHTTPS:
-		return "Unsupported HTTPS";
+		return "HTTPS needs MICROWEB_HTTPS_PROXY";
 	default:
 		break;
 	}

@@ -49,10 +49,18 @@ void __interrupt __far ctrlBreakHandler() {
 
 static void (__interrupt __far* oldCtrlBreakHandler)();
 static void (__interrupt __far* oldCtrlCHandler)();
+static bool handlersSaved = false;
 
 void DOSNetworkDriver::Init()
 {
 	isConnected = false;
+	CtrlBreakDetected = 0;
+
+	//printf("Init network driver\n");
+	if (Utils::parseEnv() != 0) {
+		printf("Failed in parseEnv()\n");
+		return;
+	}
 
 	for (int n = 0; n < MAX_CONCURRENT_HTTP_REQUESTS; n++)
 	{
@@ -69,18 +77,15 @@ void DOSNetworkDriver::Init()
 		}
 	}
 
-	//printf("Init network driver\n");
-	if (Utils::parseEnv() != 0) {
-		printf("Failed in parseEnv()\n");
-		return;
-	}
-
-	// Store old Ctrl-C / Ctrl-Break handlers to avoid bug in mTCP where they don't get restored
+	// mTCP restores Ctrl-Break; restore Ctrl-C too when continuing offline
+	// after an init failure. Never restore vectors that were not saved.
 	oldCtrlBreakHandler = getvect(0x1b);
 	oldCtrlCHandler = getvect(0x23);
+	handlersSaved = true;
 
 	//printf("Init network stack\n");
 	if (Utils::initStack(MAX_CONCURRENT_HTTP_REQUESTS, TCP_SOCKET_RING_SIZE, ctrlBreakHandler, ctrlBreakHandler)) {
+		Shutdown();
 		printf("Failed to initialize TCP/IP\n");
 		return;
 	}
@@ -93,12 +98,19 @@ void DOSNetworkDriver::Shutdown()
 {
 	if (isConnected)
 	{
+		// Remove live sockets before releasing the stack and packet buffers.
+		for (int n = 0; n < MAX_CONCURRENT_HTTP_REQUESTS; n++)
+			sockets[n]->Close();
 		Utils::endStack();
 		isConnected = false;
 	}
 
-	setvect(0x1b, oldCtrlBreakHandler);
-	setvect(0x23, oldCtrlCHandler);
+	if (handlersSaved)
+	{
+		setvect(0x1b, oldCtrlBreakHandler);
+		setvect(0x23, oldCtrlCHandler);
+		handlersSaved = false;
+	}
 }
 
 void DOSNetworkDriver::Update()
@@ -162,8 +174,9 @@ NetworkTCPSocket* DOSNetworkDriver::CreateSocket()
 				TcpSocket* sock = TcpSocketMgr::getSocket();
 				if (sock)
 				{
-					sockets[n]->SetSock(sock);
-					return sockets[n];
+					if (sockets[n]->SetSock(sock))
+						return sockets[n];
+					TcpSocketMgr::freeSocket(sock);
 				}
 				return NULL;
 			}
@@ -183,14 +196,14 @@ DOSTCPSocket::DOSTCPSocket()
 	sock = NULL;
 }
 
-void DOSTCPSocket::SetSock(TcpSocket* inSock)
+bool DOSTCPSocket::SetSock(TcpSocket* inSock)
 {
+	// mTCP owns and frees receive storage in destroy(), including resets and
+	// timeouts. Never give it a pointer into this wrapper's object storage.
+	if (inSock && inSock->setRecvBuffer(TCP_RECV_BUFFER_SIZE) != 0)
+		return false;
 	sock = inSock;
-	if (sock)
-	{
-		sock->rcvBuffer = recvBuffer;
-		sock->rcvBufSize = TCP_RECV_BUFFER_SIZE;
-	}
+	return sock != NULL;
 }
 
 int DOSTCPSocket::Send(uint8_t* data, int length)
@@ -233,7 +246,9 @@ void DOSTCPSocket::Close()
 {
 	if (sock)
 	{
-		sock->closeNonblocking();
+		// freeSocket() only returns a handle to the pool. A pending nonblocking
+		// close still owns queues and an active-list entry, so abort it first.
+		sock->abortConnection();
 		TcpSocketMgr::freeSocket(sock);
 		sock = NULL;
 	}

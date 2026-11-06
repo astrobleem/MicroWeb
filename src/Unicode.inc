@@ -283,7 +283,7 @@ TextEncodingPage UTF8_LatinExtendedA =
 TextEncodingPage ISO_8859_2_Encoding = 
 {
 	{
-		"E",						//	€	EURO SIGN (U+20AC)
+		"EUR",						//	€	EURO SIGN (U+20AC)
 		"",							//		UNUSED
 		",",						//	‚	SINGLE LOW-9 QUOTATION MARK (U+201A)
 		"",							//		UNUSED
@@ -418,7 +418,7 @@ TextEncodingPage ISO_8859_2_Encoding =
 TextEncodingPage ISO_8859_1_Encoding = 
 {
 	{
-		"E",					//	€	128	&euro;	euro sign
+		"EUR",					//	€	128	&euro;	euro sign
 		"",						//	 	129	 	NOT USED
 		",",					//	‚	130	&sbquo;	single low-9 quotation mark
 		"f",					//	ƒ	131	&fnof;	Latin small letter f with hook

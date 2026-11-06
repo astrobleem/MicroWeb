@@ -26,23 +26,30 @@ struct URL
 	URL() { url[0] = '\0'; }
 	URL(const char* inURL)
 	{
-		strcpy(url, inURL);
+		Assign(inURL);
 	}
 	URL(const URL& other)
 	{
-		strcpy(url, other.url);
+		Assign(other.url);
 	}
 
 	URL& operator= (const URL& other)
 	{
-		strcpy(url, other.url);
+		Assign(other.url);
 		return *this;
 	}
 
 	URL& operator= (const char* other)
 	{
-		strcpy(url, other);
+		Assign(other);
 		return *this;
+	}
+
+	void Assign(const char* value)
+	{
+		size_t length = value ? strlen(value) : MAX_URL_LENGTH;
+		if (length >= MAX_URL_LENGTH) { url[0] = '\0'; return; }
+		memmove(url, value, length + 1);
 	}
 
 	void CleanUp();

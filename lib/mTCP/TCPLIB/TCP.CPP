@@ -783,6 +783,29 @@ void TcpSocket::closeNonblocking( void ) {
 }
 
 
+// Cancel immediately without leaving the socket active or retaining queued
+// buffers. HTTP may reuse its limited socket pool on the very next request.
+// Send the peer a reset when the connection is synchronized, then use the
+// normal destruction path. The caller must still return it with freeSocket.
+void TcpSocket::abortConnection( void ) {
+
+  if ( state >= TCP_STATE_ESTABLISHED && state != TCP_STATE_TIME_WAIT ) {
+    // Reuse the existing reset builder with the reverse (incoming) tuple.
+    IpHeader ip;
+    TcpHeader tcp;
+    memcpy( ip.ip_src, dstHost, sizeof(IpAddr_t) );
+    tcp.src = htons( dstPort );
+    tcp.dst = htons( srcPort );
+    tcp.seqnum = htonl( ackNum );
+    tcp.acknum = htonl( seqNum );
+    tcp.setCodeBits( TCP_CODEBITS_ACK );
+    sendResetPacket( &ip, &tcp, 0 );
+  }
+  destroy( );
+  closeReason = 2;
+}
+
+
 // isCloseDone
 //
 // Use with closeNonblocking.  Returns

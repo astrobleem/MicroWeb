@@ -22,7 +22,7 @@ V20 CPU models. Model-only IDCT timings show a small improvement, but whole-imag
 speed on a V20 and operation on physical V20/V30 hardware remain unverified.
 
 ## Limitations
-* HTTP only (See HTTPS limitations below)
+* Direct HTTP only; optional plaintext HTTPS gateway (see HTTPS limitations below)
 * GIF, baseline JPEG and non-interlaced PNG images are rendered. PNG supports palette and grayscale (1/2/4/8-bit), RGB, grayscale-alpha and RGBA (8-bit), all five row filters, and transparency.
 * Partial PNG alpha uses ordered coverage in color modes; monochrome composites against the page background. Adam7 and 16-bit PNG pixels are unsupported, while their dimensions are still loaded for layout.
 * PNG rows are limited to 4096 bytes before filtering, and rendered images to 1024 pixels wide by 4096 high, subject to available RAM. A bounded workspace of about 40K is shared with the other image decoders. The local `examples/png.htm` sample needs its accompanying PNG files and `tandy.gif`.
@@ -38,7 +38,10 @@ Reset buttons are displayed but do not reset fields; disabled fieldset/optgroup
 inheritance is not implemented.
 Redirects are limited to five hops, with POST-aware 301/302/303/307/308 handling.
 Stalled plain GET requests may retry once before receiving response bytes; POST
-requests are never automatically retried. HTTPS remains unsupported.
+requests are never automatically retried. Native TLS remains unsupported.
+`HTTP_USER_AGENT` adds an optional suffix (up to 120 bytes); invalid header
+characters or longer values are ignored. URL and HTML-attribute handling keeps
+query data intact and rejects oversized URLs.
 
 GIF decoding uses a faster streaming LZW path without increasing decoder RAM.
 
@@ -110,11 +113,40 @@ You can use a URL as an argument to load a specific page on startup. This can al
 For example `MICROWEB -noems http://68k.news` will load the 68k.news website on startup but disable the EMS routines
 
 ## HTTPS limitations
-TLS encryption is currently not supported which means that only HTTP servers can be accessed directly. There are some options for HTTPS sites:
-* Use a proxy server such as [retro-proxy](https://github.com/DrKylstein/retro-proxy) which converts HTTPS to HTTP. You can configure a proxy server by setting the HTTP_PROXY environment variable before running MicroWeb. e.g. `SET HTTP_PROXY=192.168.0.50:8000`
-* Use the [FrogFind!](http://www.frogfind.com) web service to view a stripped down version of a site. If MicroWeb is redirected to an HTTPS site then it will generate a FrogFind link for your convenience.
+MicroWeb has no native TLS. Direct connections support HTTP only; HTTPS addresses
+are kept intact rather than silently changed to HTTP.
+
+* **HTTPS gateway:** set `MICROWEB_HTTPS_PROXY=192.168.0.50:8080` to use a trusted
+  plaintext TLS gateway such as [Crypto Ancienne / carl](https://github.com/classilla/cryanc).
+  The setting accepts a DNS name or IPv4 address and optional port (default 80),
+  without a scheme, credentials or path. MicroWeb sends absolute HTTPS URLs to
+  the gateway; this is not a CONNECT tunnel or a conventional TLS proxy.
+* **HTTP proxy:** `HTTP_PROXY=192.168.0.50:8000` applies only to HTTP destinations.
+  It does not enable HTTPS forwarding.
+* **Reader:** no public reader is configured by default. To offer a manually
+  followed link on the HTTPS-help page, set `MICROWEB_READER` to a trusted
+  plain-HTTP prefix ending in its empty destination query parameter, for example
+  `http://192.168.0.50/read.php?a=`. The complete destination is URL-encoded;
+  links exceeding 511 bytes are refused. Verify the reader's endpoint and HTTP
+  support yourself; no unverified FrogFind replacement is selected automatically.
+
+**The DOS-to-gateway/reader connection is unencrypted.** These services see the
+URLs and any submitted content. Use a trusted local network and avoid passwords,
+private links and tokens. The gateway handles upstream TLS and certificates;
+MicroWeb cannot verify them. Gateway browsing carries an unencrypted-link status
+warning and adds no client TLS buffer. It does not make modern scripts or styles
+compatible with MicroWeb.
+
+Without a configured gateway, HTTPS opens the local help page. Gateway errors
+never fall back to direct HTTP, HTTPS-to-HTTP redirects are rejected, and
+scheme-relative redirects preserve HTTPS. Clear either setting with
+`SET MICROWEB_HTTPS_PROXY=` or `SET MICROWEB_READER=`.
 
 ## Getting started
+Keep the `.dat` assets beside `MICROWEB.EXE`. Launching it from another directory
+or through `PATH` preserves that directory for relative page paths. Normal exit
+and initialization failures restore the DOS network and interrupt state.
+
 Check out the [releases page](https://github.com/jhhoward/MicroWeb/releases) which will include a pre-built binary. Also available are FreeDOS boot disk images for 360K and 720K floppies, which are configured to work with a NE2000 network adapter. These boot images can be used in an emulator such as [PCem](https://pcem-emulator.co.uk/).
 
 ## Network setup

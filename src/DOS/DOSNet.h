@@ -34,7 +34,7 @@ class DOSTCPSocket : public NetworkTCPSocket
 public:
 	DOSTCPSocket();
 	TcpSocket* GetSock() { return sock; }
-	void SetSock(TcpSocket* sock);
+	bool SetSock(TcpSocket* sock);
 
 	virtual int Send(uint8_t* data, int length) override;
 	virtual int Receive(uint8_t* buffer, int length) override;
@@ -45,7 +45,6 @@ public:
 
 private:
 	TcpSocket* sock;
-	uint8_t recvBuffer[TCP_RECV_BUFFER_SIZE];
 };
 
 class DOSNetworkDriver : public NetworkDriver

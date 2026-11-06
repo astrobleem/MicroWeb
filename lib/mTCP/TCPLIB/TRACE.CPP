@@ -67,7 +67,10 @@ void Trace_beginTracing( void ) {
 
 
 void Trace_endTracing( void ) {
-  fclose( Trace_Stream );
+  if ( Trace_Stream != stderr ) {
+    fclose( Trace_Stream );
+    Trace_Stream = stderr;
+  }
 }
 
 

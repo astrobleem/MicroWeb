@@ -163,6 +163,7 @@ void HTMLParser::Finish()
 const char* ampersandEscapeSequences[] = 
 {
     "apos", "'",
+    "euro", "EUR",
 	"quot",			"\"",
 	"amp",			"&",
 	"lt",			"<",
@@ -500,6 +501,9 @@ void HTMLParser::FlushTextBuffer()
 
 const char* HTMLParser::GetUnicodeString(int unicodePoint)
 {
+	// Useful fallbacks outside the font's Latin-1 glyph range.
+	if (unicodePoint == 0x1e9e) return "SS";
+	if (unicodePoint == 0x20ac) return "EUR";
 	TextEncodingPage* encodingPage = NULL;
 
 	if (unicodePoint >= 0x80 && unicodePoint <= 0xff)
@@ -525,133 +529,73 @@ const char* HTMLParser::GetUnicodeString(int unicodePoint)
 
 void HTMLParser::ReplaceAmpersandEscapeSequences(char* buffer, bool replaceNonBreakingSpace)
 {
-	while (*buffer)
+	// Decode once while compacting in place. Never revisit a decoded '&',
+	// and never read past a trailing '&' or an unterminated unknown entity.
+	char* read = buffer;
+	char* write = buffer;
+	while (*read)
 	{
-		if (*buffer == '&')
+		const char* replacement = nullptr;
+		char ascii[2] = { 0, 0 };
+		char* end = read;
+		if (*read == '&')
 		{
-			buffer++;
-
-			// Find length of sequence
-			int escapeSequenceLength = 0;
-			while (buffer[escapeSequenceLength] && buffer[escapeSequenceLength] != ';' && !IsWhiteSpace(buffer[escapeSequenceLength]))
+			end = read + 1;
+			while (*end && *end != ';' && *end != '&' && !IsWhiteSpace(*end)) ++end;
+			size_t length = end - read - 1;
+			if (length && read[1] == '#')
 			{
-				escapeSequenceLength++;
-			}
-			bool correctlyTerminated = buffer[escapeSequenceLength] == ';';
-			char* nextBufferPosition = correctlyTerminated ? buffer + escapeSequenceLength + 1 : buffer + escapeSequenceLength;
-
-			if(escapeSequenceLength > 0)
-			{
-				if (*buffer == '#')
+				const char* digit = read + 2;
+				unsigned int base = 10;
+				if (digit < end && (*digit == 'x' || *digit == 'X')) { ++digit; base = 16; }
+				unsigned long number = 0;
+				bool valid = digit < end;
+				for (; digit < end && valid; ++digit)
 				{
-					int number = 0;
-
-					// This is a entity number
-					if (buffer[1] == 'x' || buffer[1] == 'X')
-					{
-						// Hex number
-						number = strtol(buffer + 2, NULL, 16);
-					}
-					else
-					{
-						number = atoi(buffer + 1);
-					}
-					buffer--;
-
-					if (number > FIRST_FONT_GLYPH && number < 128)
-					{
-						*buffer = (char)(number);
-						memmove(buffer + 1, nextBufferPosition, strlen(nextBufferPosition) + 1);
-					}
-					else
-					{
-						const char* unicodeReplacementText = GetUnicodeString(number);
-						int replacementTextLength = (int)strlen(unicodeReplacementText);
-						memcpy(buffer, unicodeReplacementText, replacementTextLength);
-						memmove(buffer + replacementTextLength, nextBufferPosition, strlen(nextBufferPosition) + 1);
-						buffer += replacementTextLength - 1;
-					}
+					unsigned int value = *digit >= '0' && *digit <= '9' ? *digit - '0' :
+						*digit >= 'a' && *digit <= 'f' ? *digit - 'a' + 10 :
+						*digit >= 'A' && *digit <= 'F' ? *digit - 'A' + 10 : 16;
+					if (value >= base || number > (0x10ffffUL - value) / base) valid = false;
+					else number = number * base + value;
 				}
-				else
+				if (valid)
 				{
-					int matchingEscapeSequence = -1;
-
-					for (int n = 0; n < NUM_AMPERSAND_ESCAPE_SEQUENCES; n++)
+					if (number >= FIRST_FONT_GLYPH && number < 128)
 					{
-						const char* escapeSequence = ampersandEscapeSequences[n * 2];
-						bool matching = true;
-
-						for (int i = 0; i < escapeSequenceLength; i++)
-						{
-							if (escapeSequence[i] == '\0')
-							{
-								matching = false;
-								break;
-							}
-							if (buffer[i] != escapeSequence[i])
-							{
-								matching = false;
-								break;
-							}
-						}
-
-						if (matching && escapeSequence[escapeSequenceLength] == '\0')
-						{
-							matchingEscapeSequence = n;
-							break;
-						}
+						ascii[0] = (char)number;
+						replacement = ascii;
 					}
-
-					if (matchingEscapeSequence == -1)
+					else replacement = number <= 32767 ? GetUnicodeString((int)number) : "?";
+				}
+			}
+			else if (length)
+			{
+				// Prefer exact case so umlaut capitals retain their distinct glyphs.
+				for (int pass = 0; pass < 2 && !replacement; ++pass)
+				{
+					for (int n = 0; n < NUM_AMPERSAND_ESCAPE_SEQUENCES; ++n)
 					{
-						for (int n = 0; n < NUM_AMPERSAND_ESCAPE_SEQUENCES; n++)
-						{
-							// Look again but this time non case sensitive comparison
-							const char* escapeSequence = ampersandEscapeSequences[n * 2];
-							bool matching = true;
-
-							for (int i = 0; i < escapeSequenceLength; i++)
-							{
-								if (escapeSequence[i] == '\0')
-								{
-									matching = false;
-									break;
-								}
-								if (tolower(buffer[i]) != tolower(escapeSequence[i]))
-								{
-									matching = false;
-									break;
-								}
-							}
-
-							if (matching && escapeSequence[escapeSequenceLength] == '\0')
-							{
-								matchingEscapeSequence = n;
-								break;
-							}
-						}
-					}
-
-					if (matchingEscapeSequence != -1)
-					{
-						buffer--;	// One step backwards to write over the &
-						const char* replacementText = ampersandEscapeSequences[matchingEscapeSequence * 2 + 1];
-						int replacementTextLength = (int)strlen(replacementText);
-						memcpy(buffer, replacementText, replacementTextLength);
-						memmove(buffer + replacementTextLength, nextBufferPosition, strlen(nextBufferPosition) + 1);
-
-						if (replaceNonBreakingSpace && *buffer == '\x1f')
-						{
-							*buffer = ' ';
-						}
-
-						buffer += replacementTextLength - 1;
+						const char* entity = ampersandEscapeSequences[n * 2];
+						if (strlen(entity) != length) continue;
+						size_t i = 0;
+						while (i < length && (pass ? tolower((unsigned char)read[i + 1]) == tolower((unsigned char)entity[i]) : read[i + 1] == entity[i])) ++i;
+						if (i == length) { replacement = ampersandEscapeSequences[n * 2 + 1]; break; }
 					}
 				}
 			}
 		}
-		buffer++;
+		if (replacement)
+		{
+			read = *end == ';' ? end + 1 : end;
+			while (*replacement)
+			{
+				char c = *replacement++;
+				*write++ = replaceNonBreakingSpace && c == '\x1f' ? ' ' : c;
+			}
+		}
+		else *write++ = *read++;
 	}
+	*write = '\0';
 }
 
 bool HTMLParser::IsWhiteSpace(char c)

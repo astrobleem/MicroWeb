@@ -33,6 +33,9 @@ VideoDriver* Platform::video = nullptr;
 InputDriver* Platform::input = nullptr;
 NetworkDriver* Platform::network = nullptr;
 
+static bool shutdownComplete = false;
+extern volatile uint8_t CtrlBreakDetected;
+
 /*
 	Find6845
 	
@@ -197,12 +200,8 @@ static int AutoDetectVideoMode()
 
 bool Platform::Init(int argc, char* argv[])
 {
-	network = new DOSNetworkDriver();
-	if (network)
-	{
-		network->Init();
-	}
-	else FatalError("Could not create network driver");
+	// Cover return from the mode picker and every runtime exit path.
+	atexit(Platform::Shutdown);
 
 	VideoModeInfo* videoMode = nullptr;
 
@@ -230,6 +229,14 @@ bool Platform::Init(int argc, char* argv[])
 	{
 		return false;
 	}
+
+	// Do not hook packet/timer interrupts while getchar() may exit on Ctrl-C.
+	network = new DOSNetworkDriver();
+	if (network)
+	{
+		network->Init();
+	}
+	else FatalError("Could not create network driver");
 
 	if (videoMode == &VideoModeList[HP95LX] || videoMode == &VideoModeList[CGAPalmtop])
 	{
@@ -264,16 +271,26 @@ bool Platform::Init(int argc, char* argv[])
 
 void Platform::Shutdown()
 {
+	if (shutdownComplete)
+		return;
+	shutdownComplete = true;
+
+	if (input) input->Shutdown();
+	if (video) video->Shutdown();
+	if (network) network->Shutdown();
 	MemoryManager::pageBlockAllocator.Shutdown();
-	input->Shutdown();
-	video->Shutdown();
-	network->Shutdown();
 
 	delete video;
+	video = nullptr;
 }
 
 void Platform::Update()
 {
+	if (CtrlBreakDetected)
+	{
+		App::Get().Close();
+		return;
+	}
 	network->Update();
 	input->Update();
 }
@@ -282,17 +299,12 @@ void Platform::FatalError(const char* message, ...)
 {
 	va_list args;
 
-	if (video)
-	{
-		video->Shutdown();
-	}
+	Shutdown();
 
 	va_start(args, message);
 	vfprintf(stderr, message, args);
 	printf("\n");
 	va_end(args);
-
-	MemoryManager::pageBlockAllocator.Shutdown();
 
 	exit(1);
 }

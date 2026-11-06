@@ -1,181 +1,113 @@
 #include "URL.h"
 
+static bool IsFileScheme(const char* url, const char* scheme)
+{
+	return scheme && scheme - url == 4 &&
+		(url[0] == 'f' || url[0] == 'F') && (url[1] == 'i' || url[1] == 'I') &&
+		(url[2] == 'l' || url[2] == 'L') && (url[3] == 'e' || url[3] == 'E');
+}
+
 void URL::CleanUp()
 {
-	// Replace back slashes with forward ones
-	for (char* ptr = url; *ptr; ptr++)
-	{
-		if (*ptr == '\\')
-			*ptr = '/';
-	}
+	// Query and fragment bytes are opaque, not path components or HTML.
+	for (char* p = url; *p && *p != '?' && *p != '#'; ++p)
+		if (*p == '\\') *p = '/';
 
-	// Collapse /./ and /../ 
-	char* directory;
-	while (directory = strstr(url, "/./"))
+	char* scheme = strstr(url, "://");
+	bool local = !scheme || IsFileScheme(url, scheme);
+	char* start = scheme ? scheme + 3 : url;
+	if (!local) start += strcspn(start, "/?#");
+	else if (*start && start[1] == ':') start += 2;
+	bool rooted = *start == '/';
+	char* read = start;
+	char* write = start;
+	while (*read && *read != '?' && *read != '#')
 	{
-		strcpy(directory, directory + 2);
-	}
-	directory = strstr(url, "/../");
-	char* protocolEnd = strstr(url, "://");
-	if (protocolEnd)
-		protocolEnd += 3;
-
-	while (directory && directory > url)
-	{
-		char* prevSlash = directory - 1;
-		while (prevSlash > url && *prevSlash != '/' && prevSlash > protocolEnd)
+		if (write == start && local && !strncmp(read, "./", 2)) { read += 2; continue; }
+		if (!strncmp(read, "/./", 3)) { read += 2; continue; }
+		bool parent = !strncmp(read, "/../", 4) ||
+			(!strncmp(read, "/..", 3) && (!read[3] || read[3] == '?' || read[3] == '#'));
+		if (parent)
 		{
-			prevSlash--;
-		}
-		if (*prevSlash == '/' && prevSlash > url)
-		{
-			strcpy(prevSlash, directory + 3);
-			directory = strstr(prevSlash, "/../");
-		}
-		else
-		{
-			// At most top level, collapse remaining /../ instances
-			while (directory)
+			char* previous = write;
+			while (previous > start && previous[-1] != '/') --previous;
+			bool previousIsParent = write - previous == 2 && previous[0] == '.' && previous[1] == '.';
+			if (rooted || (previous < write && !previousIsParent))
 			{
-				strcpy(directory, directory + 3);
-				directory = strstr(url, "/../");
+				write = previous > start ? previous - 1 : start;
+				read += 3;
+				if (write == start && local && !rooted && *read == '/') ++read;
+				if (!*read || *read == '?' || *read == '#')
+				{
+					if (rooted || write > start) *write++ = '/';
+					break;
+				}
+				continue;
 			}
+		}
+		if (!strncmp(read, "/.", 2) && (!read[2] || read[2] == '?' || read[2] == '#'))
+		{
+			read += 2;
+			if (rooted || write > start) *write++ = '/';
 			break;
 		}
+		*write++ = *read++;
 	}
-
-	// Fix &amp escape sequences
-	char* match;
-	while (match = strstr(url, "&amp;"))
-	{
-		memmove(match + 1, match + 5, strlen(match + 1) - 3);
-	}
+	memmove(write, read, strlen(read) + 1);
 }
 
 const URL& URL::GenerateFromRelative(const char* baseURL, const char* relativeURL)
 {
 	static URL result;
-
-	// First check if the relative URL is actually an absolute URL
-	const char* protocolLocation = strstr(relativeURL, "://");
-	if (protocolLocation)
+	// Stage separately because callers may pass the preceding result as base.
+	// Static storage keeps this buffer off the 2 KB DOS call stack.
+	static URL next;
+	next.url[0] = '\0';
+	if (!baseURL || !relativeURL || strlen(baseURL) >= MAX_URL_LENGTH || strlen(relativeURL) >= MAX_URL_LENGTH)
 	{
-		const char* questionMarkLocation = strchr(relativeURL, '?');
-
-		if (!questionMarkLocation || protocolLocation < questionMarkLocation)
-		{
-			result = relativeURL;
-			return result;
-		}
-	}
-
-	// Starting with // should be treated as an absolte URL but we will prepend with http://
-	if (strstr(relativeURL, "//") == relativeURL)
-	{
-		strcpy(result.url, "http:");
-		strcpy(result.url + 5, relativeURL);
+		result.url[0] = '\0';
 		return result;
 	}
 
-	// Check if this is a hash link
-	if (relativeURL[0] == '#')
+	const char* scheme = strstr(baseURL, "://");
+	bool local = !scheme || IsFileScheme(baseURL, scheme);
+	const char* basePath = scheme ? scheme + 3 : baseURL;
+	if (!local) basePath += strcspn(basePath, "/?#");
+	const char* prefixSource = baseURL;
+	size_t prefix = 0;
+	bool slash = false;
+	const char* targetScheme = relativeURL + strcspn(relativeURL, ":/\\?#");
+	if (*targetScheme == ':') { /* Absolute URI or DOS drive path. */ }
+	else if (relativeURL[0] == '/' && relativeURL[1] == '/')
 	{
-		strcpy(result.url, baseURL);
-
-		// Strip any existing hash link
-		char* existing = strchr(result.url, '#');
-		if (existing)
-		{
-			*existing = '\0';
-		}
-
-		strcpy(result.url + strlen(result.url), relativeURL);
-		return result;
+		if (scheme && !local) prefix = scheme - baseURL + 1;
+		else { prefixSource = "http:"; prefix = 5; }
 	}
-
-	// find last '/' in base
-	const char* baseQuestionMarkLocation = strchr(baseURL, '?');
-	const char* lastSlashPos = NULL;
-
-	if (baseQuestionMarkLocation)
+	else if (relativeURL[0] == '/' || relativeURL[0] == '\\')
 	{
-		lastSlashPos = strchr(baseURL, '/');
-
-		while (lastSlashPos)
-		{
-			const char* slashPos = strchr(lastSlashPos + 1, '/');
-			if (!slashPos)
-			{
-				break;
-			}
-			else if (slashPos < baseQuestionMarkLocation)
-			{
-				lastSlashPos = slashPos;
-			}
-			else break;
-		}
+		prefix = basePath - baseURL;
+		if (local && basePath[0] && basePath[1] == ':') prefix += 2;
 	}
+	else if (relativeURL[0] == '#') prefix = strcspn(baseURL, "#");
+	else if (relativeURL[0] == '?') prefix = strcspn(baseURL, "?#");
+	else if (!relativeURL[0]) prefix = strcspn(baseURL, "#");
 	else
 	{
-		const char* baseProtocolLocation = strstr(baseURL, "://");
-		if (baseProtocolLocation)
-		{
-			lastSlashPos = strrchr(baseProtocolLocation + 3, '/');
-		}
-		else
-		{
-			lastSlashPos = strrchr(baseURL, '/');
-		}
-		if (!lastSlashPos)
-		{
-			lastSlashPos = baseURL + strlen(baseURL);
-		}
+		const char* end = baseURL + strcspn(baseURL, "?#");
+		const char* last = end;
+		while (last > basePath && last[-1] != '/' && last[-1] != '\\') --last;
+		prefix = last - baseURL;
+		if (last == basePath && !local) slash = true;
 	}
 
-
-	// Skip leading '/' on relative URL
-	if (*relativeURL == '/')
+	size_t length = strlen(relativeURL);
+	if (prefix + length + (slash ? 1 : 0) < MAX_URL_LENGTH)
 	{
-		while (*relativeURL == '/')
-		{
-			relativeURL++;
-		}
-
-		// Move lastSlashPos to the first slash position
-		const char* domainPos = strstr(baseURL, "://");
-		if (domainPos)
-		{
-			domainPos += 3;
-			const char* firstSlashPos = strchr(domainPos, '/');
-			if (firstSlashPos)
-			{
-				lastSlashPos = firstSlashPos;
-			}
-		}
+		memcpy(next.url, prefixSource, prefix);
+		if (slash) next.url[prefix++] = '/';
+		memcpy(next.url + prefix, relativeURL, length + 1);
+		next.CleanUp();
 	}
-
-	if (lastSlashPos)
-	{
-		char* writePtr = result.url;
-
-		for (const char* p = baseURL; p != lastSlashPos; p++)
-		{
-			*writePtr++ = *p;
-		}
-		*writePtr++ = '/';
-		for (const char* p = relativeURL; *p; p++)
-		{
-			*writePtr++ = *p;
-		}
-		*writePtr = '\0';
-	}
-	else
-	{
-		strcpy(result.url, "http://");
-		strcpy(result.url + 7, relativeURL);
-	}
-
-	result.CleanUp();
-
+	result = next;
 	return result;
 }

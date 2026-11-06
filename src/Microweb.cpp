@@ -15,11 +15,14 @@
 #include <stdio.h>
 #include "Platform.h"
 #include "App.h"
+#include "DataPack.h"
 
 #pragma warning(disable:4996)
 
 int main(int argc, char* argv[])
 {
+	Assets.SetProgramPath(argc > 0 ? argv[0] : NULL);
+
 	if (!Platform::Init(argc, argv))
 	{
 		return 0;

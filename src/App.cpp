@@ -14,9 +14,11 @@
 
 #include <direct.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "App.h"
 #include "Platform.h"
 #include "HTTP.h"
+#include "ReaderLink.h"
 #include "Image/Decoder.h"
 
 App* App::app;
@@ -135,7 +137,8 @@ void App::Run(int argc, char* argv[])
 					page.pageURL = pageLoadTask.GetURL();
 					ui.UpdateAddressBar(page.pageURL);
 					loadTaskTargetNode = page.GetRootNode();
-					ui.SetStatusMessage("Parsing page content...", StatusBarNode::GeneralStatus);
+					ui.SetStatusMessage(!strnicmp(page.pageURL.url, "https://", 8) ?
+						HTTPS_PROXY_WARNING : "Parsing page content...", StatusBarNode::GeneralStatus);
 					if (!parser.SetContentType(pageLoadTask.GetContentType()))
 					{
 						if (pageLoadTask.type == LoadTask::RemoteFile)
@@ -263,7 +266,8 @@ void App::Run(int argc, char* argv[])
 					}
 					else
 					{
-						page.GetApp().ui.ClearStatusMessage(StatusBarNode::GeneralStatus);
+						page.GetApp().ui.SetStatusMessage(!strnicmp(page.pageURL.url, "https://", 8) ?
+								HTTPS_PROXY_WARNING : NULL, StatusBarNode::GeneralStatus);
 					}
 				}
 			}
@@ -297,8 +301,7 @@ void LoadTask::Load(HTTPRequest::RequestType requestType, const char* targetURL,
 	{
 		type = LoadTask::RemoteFile;
 
-		// Bit of a hack: try forcing http:// first
-		strcpy(url.url + 4, url.url + 5);
+		// Preserve HTTPS. Only an explicitly configured TLS gateway may load it.
 	}
 	else if (strstr(url.url, "://"))
 	{
@@ -499,7 +502,7 @@ void App::RequestNewPage(HTTPRequest::RequestType requestType, const char* url, 
 
 	if (pageLoadTask.type == LoadTask::RemoteFile && pageLoadTask.request)
 	{
-		ui.SetStatusMessage("Connecting to server...", StatusBarNode::GeneralStatus);
+		ui.SetStatusMessage(pageLoadTask.request->GetStatusString(), StatusBarNode::GeneralStatus);
 	}
 }
 
@@ -558,30 +561,21 @@ void App::ShowErrorPage(const char* message)
 	parser.Finish();
 }
 
-static const char* frogFindURL = "http://frogfind.com/read.php?a=";
-#define FROG_FIND_URL_LENGTH 31
-
 void App::ShowNoHTTPSPage()
 {
 	ResetPage();
 
 	page.SetTitle("HTTPS unsupported");
+	// Capture the final redirect destination before StopLoad destroys the
+	// request. Keep the address bar and relative-link base on that destination.
 	page.pageURL = pageLoadTask.GetURL();
 	ui.UpdateAddressBar(page.pageURL);
-
 	StopLoad();
 
-	page.pageURL = frogFindURL;
-	strncpy(page.pageURL.url + FROG_FIND_URL_LENGTH, pageLoadTask.GetURL(), MAX_URL_LENGTH - FROG_FIND_URL_LENGTH);
-
-	parser.Write("<html>");
-	parser.Write("<h1>HTTPS unsupported</h1>");
-	parser.Write("<hr>");
-	parser.Write("Sorry this browser does not support HTTPS!<br>");
-	parser.Write("<a href=\"");
-	parser.Write(page.pageURL.url);
-	parser.Write("\">Visit this site via FrogFind</a>");
-	parser.Write("</html>");
+	char readerURL[MAX_URL_LENGTH];
+	ReaderLink::Result result = ReaderLink::Build(readerURL, sizeof(readerURL),
+		getenv("MICROWEB_READER"), page.pageURL.url);
+	ReaderLink::WritePage(parser, result, readerURL);
 	parser.Finish();
 }
 
@@ -767,7 +761,8 @@ void App::BeginFileDownload(const char* savePath)
 		pageLoadTask.Load(HTTPRequest::Get, pageLoadTask.url.url);
 		requestedNewPage = true;
 		pageLoadTask.downloadFile = downloadFile;
-		ui.SetStatusMessage("Connecting to server...", StatusBarNode::GeneralStatus);
+		ui.SetStatusMessage(pageLoadTask.request ? pageLoadTask.request->GetStatusString() :
+			"Failed to make network request", StatusBarNode::GeneralStatus);
 	}
 }
 

@@ -75,6 +75,8 @@ struct DataPack
 	Font* fonts[NUM_FONT_SIZES];
 	Font* monoFonts[NUM_FONT_SIZES];
 
+	// argv[0] remains valid for the life of the application.
+	static void SetProgramPath(const char* path);
 	bool LoadPreset(Preset preset);
 	bool Load(const char* path);
 	Font* GetFont(int fontSize, FontStyle::Type fontStyle);
@@ -85,6 +87,7 @@ private:
 	Image* LoadImageAsset(FILE* fs, DataPackHeader& header, const char* entryName);
 	int FontSizeToIndex(int fontSize);
 	static const char* datapackFilenames[];
+	static const char* programPath;
 };
 
 extern DataPack Assets;

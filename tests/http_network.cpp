@@ -9,29 +9,29 @@ static clock_t testTime = 0;
 clock_t clock(void) noexcept { return testTime; }
 
 struct FakeSocket : NetworkTCPSocket {
-    std::string input, sent; size_t pos; bool closed, failSend; int stall, sendLimit;
-    FakeSocket(const std::string& text) : input(text), pos(0), closed(false), failSend(false), stall(0), sendLimit(0) {}
+    std::string input, sent; size_t pos; bool closed, failSend; int stall, sendLimit, port;
+    FakeSocket(const std::string& text) : input(text), pos(0), closed(false), failSend(false), stall(0), sendLimit(0), port(0) {}
     int Send(uint8_t* p, int n) { if(failSend) return -1; if(sendLimit && n>sendLimit) n=sendLimit; sent.append((char*)p,n); return n; }
     int Receive(uint8_t* p, int n) {
         if(stall) { --stall; return 0; }
         int amount = (int)(input.size()-pos); if(amount>n) amount=n;
         memcpy(p,input.data()+pos,amount); pos+=amount; return amount;
     }
-    int Connect(NetworkAddress, int) { return 0; }
+    int Connect(NetworkAddress, int p) { port=p; return 0; }
     bool IsConnectComplete() { return true; }
     bool IsClosed() { return closed; }
     void Close() { closed=true; }
 };
 struct FakeNetwork : NetworkDriver {
-    std::vector<std::string> replies, requests; FakeSocket* current; int created, destroyed; bool failCreate;
+    std::vector<std::string> replies, requests, hosts; std::vector<int> ports; FakeSocket* current; int created, destroyed; bool failCreate;
     FakeNetwork() : current(NULL), created(0), destroyed(0), failCreate(false) {}
-    int ResolveAddress(const char*, NetworkAddress, bool) { return 0; }
+    int ResolveAddress(const char* name, NetworkAddress, bool) { hosts.push_back(name); return 0; }
     NetworkTCPSocket* CreateSocket() {
         if(failCreate) return NULL;
         assert(created<(int)replies.size()); current=new FakeSocket(replies[created++]); return current;
     }
     void DestroySocket(NetworkTCPSocket* p) {
-        FakeSocket* f=static_cast<FakeSocket*>(p); requests.push_back(f->sent); delete f; current=NULL; ++destroyed;
+        FakeSocket* f=static_cast<FakeSocket*>(p); requests.push_back(f->sent); ports.push_back(f->port); delete f; current=NULL; ++destroyed;
     }
 };
 NetworkDriver* Platform::network = NULL;
@@ -54,7 +54,24 @@ static void redirect(const char* base,const char* location,const char* expected,
     assert(!strcmp(r.GetURL(),expected)); assert(net.created==2 && net.destroyed==2);
 }
 int main() {
-    unsetenv("HTTP_PROXY");
+    unsetenv("HTTP_PROXY"); unsetenv("MICROWEB_HTTPS_PROXY");
+    unsetenv("HTTP_USER_AGENT");
+    const char* agentValues[] = { "(DOS; Tandy 1000)", "", "evil\r\nX-Injected: yes", "bad\tvalue", "bad\177value" };
+    for (unsigned i = 0; i < sizeof(agentValues) / sizeof(agentValues[0]); ++i) {
+        setenv("HTTP_USER_AGENT", agentValues[i], 1);
+        FakeNetwork net; Platform::network = &net;
+        net.replies.push_back("HTTP/1.1 200 OK\r\nContent-Length:0\r\n\r\n");
+        HTTPRequest r; open(r, "http://example/"); run(r);
+        assert(r.GetStatus() == HTTPRequest::Finished && net.requests.size() == 1);
+        const std::string expected = i == 0 ? "User-Agent: MicroWeb 2.1 (DOS; Tandy 1000)\r\n" : "User-Agent: MicroWeb 2.1\r\n";
+        assert(net.requests[0].find(expected) != std::string::npos);
+        assert(net.requests[0].find("X-Injected:") == std::string::npos);
+    }
+    { std::string huge(121, 'x'); setenv("HTTP_USER_AGENT", huge.c_str(), 1);
+      FakeNetwork net; Platform::network = &net; net.replies.push_back("HTTP/1.1 200 OK\r\nContent-Length:0\r\n\r\n");
+      HTTPRequest r; open(r, "http://example/"); run(r); assert(r.GetStatus() == HTTPRequest::Finished);
+      assert(net.requests[0].find("User-Agent: MicroWeb 2.1\r\n") != std::string::npos); }
+    unsetenv("HTTP_USER_AGENT");
     redirect("http://example/a/b","../c","http://example/c");
     redirect("http://example/a/b","/c","http://example/c");
     redirect("http://example/a/b?q=1","?q=2","http://example/a/b?q=2");
@@ -129,5 +146,62 @@ int main() {
     { FakeNetwork net; Platform::network=&net; net.replies.push_back("HTTP/1.1 200 OK\r\nContent-Length:0\r\n\r\n");
       HTTPRequest r; setenv("HTTP_PROXY","proxy:8080",1); open(r,"http://example:8000/path"); run(r); unsetenv("HTTP_PROXY");
       assert(r.GetStatus()==HTTPRequest::Finished); assert(net.requests[0].find("Host: example:8000\r\n")!=std::string::npos); }
-    puts("PASS: HTTP redirect, socket recovery, bounds and EOF regression cases");
+    // Opt-in gateway routing: no TLS/CONNECT on DOS, and HTTP_PROXY alone
+    // must not send an HTTPS request (or its POST body) anywhere.
+    { FakeNetwork net; Platform::network=&net; setenv("HTTP_PROXY","ordinary:8080",1);
+      HTTPOptions o; o.contentData="private=body"; o.postContentType="text/plain";
+      HTTPRequest r; open(r,"https://origin.example/secure",HTTPRequest::Post,&o);
+      assert(r.GetStatus()==HTTPRequest::UnsupportedHTTPS && net.created==0 && net.hosts.empty());
+      assert(!strcmp(r.GetURL(),"https://origin.example/secure")); unsetenv("HTTP_PROXY"); }
+    setenv("MICROWEB_HTTPS_PROXY","gateway:8081",1);
+    { FakeNetwork net; Platform::network=&net; net.replies.push_back("HTTP/1.1 200 OK\r\nContent-Length:2\r\n\r\nOK");
+      setenv("HTTP_PROXY","ordinary:8080",1); HTTPRequest r;
+      open(r,"https://origin.example:8443/a?q=1#local");
+      assert(!strcmp(r.GetStatusString(),HTTPS_PROXY_WARNING));
+      assert(run(r)=="OK" && r.GetStatus()==HTTPRequest::Finished);
+      assert(!strcmp(r.GetURL(),"https://origin.example:8443/a?q=1#local"));
+      assert(net.hosts.size()==1 && net.hosts[0]=="gateway" && net.ports[0]==8081);
+      assert(net.requests[0].find("GET https://origin.example:8443/a?q=1 HTTP/1.1\r\n")==0);
+      assert(net.requests[0].find("Host: origin.example:8443\r\n")!=std::string::npos);
+      assert(net.requests[0].find("#local")==std::string::npos && net.requests[0].find("CONNECT")==std::string::npos);
+      unsetenv("HTTP_PROXY"); }
+    redirect("https://origin.example/a/b","../next","https://origin.example/next");
+    redirect("https://origin.example/a/b","//other.example/next","https://other.example/next");
+    redirect("https://origin.example/a?old","?new","https://origin.example/a?new");
+    redirect("http://origin.example/a","https://other.example/next","https://other.example/next");
+    { FakeNetwork net; Platform::network=&net;
+      net.replies.push_back("HTTP/1.1 307 Redirect\r\nLocation: //origin.example/next\r\n\r\n");
+      net.replies.push_back("HTTP/1.1 200 OK\r\nContent-Length:0\r\n\r\n");
+      HTTPOptions o; o.contentData="a=1&b=2"; o.postContentType="application/x-www-form-urlencoded";
+      HTTPRequest r; open(r,"https://origin.example/start",HTTPRequest::Post,&o); run(r);
+      assert(r.GetStatus()==HTTPRequest::Finished && net.requests.size()==2);
+      for(int i=0;i<2;++i) { assert(net.hosts[i]=="gateway" && net.ports[i]==8081);
+        assert(net.requests[i].find("POST https://origin.example/")==0);
+        assert(net.requests[i].find("\r\n\r\na=1&b=2")!=std::string::npos); } }
+    { FakeNetwork net; Platform::network=&net; net.replies.push_back("HTTP/1.1 307 Redirect\r\nLocation: http://origin.example/plain\r\n\r\n");
+      HTTPOptions o; o.contentData="private=body"; o.postContentType="text/plain";
+      HTTPRequest r; open(r,"https://origin.example/secure",HTTPRequest::Post,&o); run(r);
+      assert(r.GetStatus()==HTTPRequest::Error && net.created==1 && net.destroyed==1);
+      assert(!strcmp(r.GetStatusString(),"Blocked HTTPS to HTTP redirect"));
+      assert(!strcmp(r.GetURL(),"https://origin.example/secure")); }
+    // Invalid origins are rejected even though the socket endpoint is a proxy.
+    const char* badHTTPS[]={"https://", "https://user@origin/", "https://origin:0/", "https://origin:65536/",
+      "https://origin:+80/", "https://origin:80x/", "https://origin:/", "https://origin:80:90/"};
+    for(unsigned i=0;i<sizeof(badHTTPS)/sizeof(*badHTTPS);++i) {
+      FakeNetwork net; Platform::network=&net; HTTPRequest r; open(r,badHTTPS[i]);
+      assert(r.GetStatus()==HTTPRequest::Error && net.created==0 && net.hosts.empty()); }
+    const char* badProxies[]={"http://gateway:80", "https://gateway:80", "user@gateway:80", "gateway:0",
+      "gateway:65536", "gateway:+80", "gateway:", "gateway/path", "gateway:80:90", "gateway\r\nInjected:1"};
+    for(unsigned i=0;i<sizeof(badProxies)/sizeof(*badProxies);++i) {
+      FakeNetwork net; Platform::network=&net; setenv("MICROWEB_HTTPS_PROXY",badProxies[i],1);
+      HTTPRequest r; open(r,"https://origin.example/");
+      assert(r.GetStatus()==HTTPRequest::Error && net.created==0 && net.hosts.empty()); }
+    { FakeNetwork net; Platform::network=&net; setenv("MICROWEB_HTTPS_PROXY","",1);
+      HTTPRequest r; open(r,"https://origin.example/"); assert(r.GetStatus()==HTTPRequest::UnsupportedHTTPS && net.created==0); }
+    // Gateway failure must not cause a direct HTTPS or HTTP fallback.
+    { FakeNetwork net; Platform::network=&net; setenv("MICROWEB_HTTPS_PROXY","gateway:8081",1); net.failCreate=true;
+      HTTPRequest r; open(r,"https://origin.example/"); run(r);
+      assert(r.GetStatus()==HTTPRequest::Error && net.hosts.size()==1 && net.hosts[0]=="gateway"); }
+    unsetenv("MICROWEB_HTTPS_PROXY");
+    puts("PASS: HTTP redirects, socket recovery, bounds, EOF and explicit plaintext HTTPS gateway routing");
 }

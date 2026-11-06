@@ -39,6 +39,14 @@
 #include "Nodes/Text.h"
 #include "Nodes/CheckBox.h"
 
+// Decode HTML attributes exactly once; URL resolution must not decode them again.
+static char* DecodeAttribute(const char* value)
+{
+    char* result = MemoryManager::pageAllocator.AllocString(value);
+    if (result) HTMLParser::ReplaceAmpersandEscapeSequences(result);
+    return result;
+}
+
 static const HTMLTagHandler* tagHandlers[] =
 {
 	new HTMLTagHandler("generic"),
@@ -177,7 +185,7 @@ void ATagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 	{
 		if (!stricmp(attributes.Key(), "href"))
 		{
-			url = MemoryManager::pageAllocator.AllocString(attributes.Value());
+			url = DecodeAttribute(attributes.Value());
 		}
 	}
 
@@ -330,13 +338,6 @@ void ListTagHandler::Close(class HTMLParser& parser) const
 	parser.PopContext(this);
 }
 
-// Decode once when storing form attributes; submission encodes the resulting bytes.
-static char* FormAttribute(const char* value)
-{
-    char* result = MemoryManager::pageAllocator.AllocString(value);
-    if (result) HTMLParser::ReplaceAmpersandEscapeSequences(result);
-    return result;
-}
 
 struct HTMLInputTag
 {
@@ -363,8 +364,8 @@ void ButtonTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
     while (attributes.Parse())
     {
         if (!stricmp(attributes.Key(), "disabled")) disabled = true;
-        if (!stricmp(attributes.Key(), "name")) button->name = FormAttribute(attributes.Value());
-        if (!stricmp(attributes.Key(), "value")) button->value = FormAttribute(attributes.Value());
+        if (!stricmp(attributes.Key(), "name")) button->name = DecodeAttribute(attributes.Value());
+        if (!stricmp(attributes.Key(), "value")) button->value = DecodeAttribute(attributes.Value());
         if (!stricmp(attributes.Key(), "type") && (!stricmp(attributes.Value(), "button") || !stricmp(attributes.Value(), "reset"))) button->onClick = NULL;
     }
     if (disabled) { button->name = NULL; button->onClick = NULL; }
@@ -430,11 +431,11 @@ void InputTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 		}
 		if (!stricmp(attributes.Key(), "value"))
 		{
-			value = FormAttribute(attributes.Value());
+			value = DecodeAttribute(attributes.Value());
 		}
 		if (!stricmp(attributes.Key(), "name"))
 		{
-			name = FormAttribute(attributes.Value());
+			name = DecodeAttribute(attributes.Value());
 		}
 		if (!stricmp(attributes.Key(), "width"))
 		{
@@ -510,7 +511,7 @@ void FormTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 		{
 			if (!stricmp(attributes.Key(), "action"))
 			{
-				formData->action = FormAttribute(attributes.Value());
+				formData->action = DecodeAttribute(attributes.Value());
 			}
 			if (!stricmp(attributes.Key(), "method"))
 			{
@@ -548,7 +549,7 @@ void ImgTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 			}
 			else if (!stricmp(attributes.Key(), "src"))
 			{
-				imageNode->source = MemoryManager::pageAllocator.AllocString(attributes.Value());
+				imageNode->source = DecodeAttribute(attributes.Value());
 			}
 			else if (!stricmp(attributes.Key(), "width"))
 			{
@@ -724,7 +725,7 @@ void SelectTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 		if (!stricmp(attributes.Key(), "disabled")) disabled = true;
 		if (!stricmp(attributes.Key(), "name"))
 		{
-			name = FormAttribute(attributes.Value());
+			name = DecodeAttribute(attributes.Value());
 		}
 	}
 
@@ -748,7 +749,7 @@ void OptionTagHandler::Open(class HTMLParser& parser, char* attributeStr) const
 
 		while (attributes.Parse())
 		{
-			if (!stricmp(attributes.Key(), "value")) optionNode->value = FormAttribute(attributes.Value());
+			if (!stricmp(attributes.Key(), "value")) optionNode->value = DecodeAttribute(attributes.Value());
 			if (!stricmp(attributes.Key(), "disabled")) optionNode->disabled = true;
 			if (!stricmp(attributes.Key(), "selected"))
 			{
