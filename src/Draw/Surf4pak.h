@@ -4,7 +4,8 @@
 #include "Surface.h"
 
 // Two RGBI pixels per byte, with the left pixel in the high nibble.
-// Scanline pointers hide the Tandy's four interleaved 8K video banks.
+// Scanline pointers hide the Tandy's four interleaved 8K video banks, or
+// address the TGA-II's linear 640x200 framebuffer.
 class DrawSurface_4BPP_Packed : public DrawSurface
 {
 public:

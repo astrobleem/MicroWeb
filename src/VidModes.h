@@ -7,6 +7,7 @@
 
 #define HERCULES_MODE 0
 #define CGA_COMPOSITE_MODE 4
+#define TGA2_MODE 0x7f // Custom register-programmed mode, never sent to BIOS.
 
 struct VideoModeInfo
 {

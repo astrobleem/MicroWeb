@@ -18,6 +18,7 @@
 #include "Hercules.h"
 #include "../VidModes.h"
 #include "BIOSVid.h"
+#include "Tga2Vid.h"
 #include "DOSInput.h"
 #include "DOSNet.h"
 
@@ -113,6 +114,7 @@ static const int EGA = 6;
 static const int VGA = 8;
 static const int Amstrad = 14;
 static const int Tandy = 19;
+static const int Tga2 = 20;
 
 static int AutoDetectVideoMode()
 {
@@ -156,6 +158,11 @@ static int AutoDetectVideoMode()
 	if (GetAmstradROSVersion() != 0)
 	{
 		return Amstrad;
+	}
+
+	if (Tga2Detected())
+	{
+		return Tga2;
 	}
 
 	// Original Tandy 1000 ROM signature. Check after EGA/VGA so that an

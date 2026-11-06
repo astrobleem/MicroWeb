@@ -15,6 +15,7 @@ file Font.obj
 file Style.obj 
 file Interface.obj 
 file TndyMem.obj
+file Tga2Vid.obj
 file DOSInput.obj 
 file DOSNet.obj 
 file Page.obj 

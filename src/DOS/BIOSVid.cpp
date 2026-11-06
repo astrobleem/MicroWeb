@@ -35,6 +35,7 @@
 BIOSVideoDriver::BIOSVideoDriver()
 {
 	startingScreenMode = -1;
+	usingTga2 = false;
 }
 
 void BIOSVideoDriver::GeneratePalette()
@@ -79,6 +80,7 @@ void BIOSVideoDriver::GeneratePalette()
 void BIOSVideoDriver::Init(VideoModeInfo* inVideoModeInfo)
 {
 	if (inVideoModeInfo->surfaceFormat == DrawSurface::Format_4BPP_Packed &&
+		inVideoModeInfo->biosVideoMode != TGA2_MODE &&
 		!TandyVideoMemoryReady())
 	{
 		Platform::FatalError("Native Tandy mode requires protected video memory");
@@ -91,7 +93,8 @@ void BIOSVideoDriver::Init(VideoModeInfo* inVideoModeInfo)
 	screenWidth = videoMode->screenWidth;
 	screenHeight = videoMode->screenHeight;
 
-	if (!SetScreenMode(videoMode->biosVideoMode))
+	usingTga2 = videoMode->biosVideoMode == TGA2_MODE;
+	if (!(usingTga2 ? tga2.Init() : SetScreenMode(videoMode->biosVideoMode)))
 	{
 		Platform::FatalError("Could not set video mode: %d", videoMode->biosVideoMode);
 		return;
@@ -201,7 +204,7 @@ void BIOSVideoDriver::Init(VideoModeInfo* inVideoModeInfo)
 		else
 		{
 			// No interlacing
-			int offset = 0;
+			unsigned int offset = 0;
 			for (int y = 0; y < screenHeight; y++)
 			{
 				drawSurface->lines[y] = (uint8_t*)MK_FP(videoMode->vramPage1, offset);
@@ -213,9 +216,17 @@ void BIOSVideoDriver::Init(VideoModeInfo* inVideoModeInfo)
 
 void BIOSVideoDriver::Shutdown()
 {
+	if (usingTga2)
+	{
+		tga2.Shutdown();
+		usingTga2 = false;
+		startingScreenMode = -1;
+		return;
+	}
 	if (startingScreenMode != -1)
 	{
 		SetScreenMode(startingScreenMode);
+		startingScreenMode = -1;
 	}
 }
 

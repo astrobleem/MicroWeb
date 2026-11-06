@@ -16,6 +16,7 @@
 #define _BIOSVID_H_
 
 #include "../Platform.h"
+#include "Tga2Vid.h"
 
 struct Image;
 
@@ -34,6 +35,8 @@ private:
 	void GeneratePalette();
 
 	int startingScreenMode;
+	Tga2Video tga2;
+	bool usingTga2;
 };
 
 #endif

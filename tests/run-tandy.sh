@@ -20,3 +20,7 @@ ASAN_OPTIONS="detect_leaks=0${ASAN_OPTIONS:+:$ASAN_OPTIONS}" build/tests/tandy-m
 
 # Native RGBI GIF palette fast path and unchanged fallback modes.
 tests/run-tandy-gif.sh
+
+# Video II is a distinct linear framebuffer and hardware setup path.
+tests/run-tga2.sh
+tests/run-tga2-surface.sh
