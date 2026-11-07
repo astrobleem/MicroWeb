@@ -1,7 +1,9 @@
 # MicroWeb DOS web browser
 MicroWeb is a web browser for DOS that runs as a 16-bit real mode application and is designed to run on minimal hardware.
 
-![Screenshot](screenshot.gif)
+![MicroWeb displaying FrogFind.de in 16 colours on a real Tandy with a CM-5 monitor](tandy-frogfind.jpeg)
+
+*FrogFind.de on real Tandy hardware, in 16 colours.*
 
 ## Minimum requirements
 To run you will need:
